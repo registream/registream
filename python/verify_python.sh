@@ -67,7 +67,7 @@ for d in "$CORE_DIR" "$AUTOLABEL_DIR" "$META_DIR"; do
 done
 
 # ─── Mode-specific setup ─────────────────────────────────────────────────────
-UV_RUN_ARGS=(--no-project)
+UV_RUN_ARGS=(--no-project --refresh)
 
 case "$mode" in
     local)
