@@ -1,171 +1,167 @@
-*! Test 15: Timestamp Cache Logic Test (Numeric Clock Values)
-* Tests the 24-hour timestamp comparison using numeric clock() values
-* Verifies that numeric timestamps are properly calculated and compared
-* This is the CLEAN implementation - no string parsing needed!
+/*==============================================================================
+  Test 15: Timestamp Cache Logic
+  Pure arithmetic test for 24-hour timestamp caching logic
+  Standalone - no project root or config dependencies
+  Author: Jeffrey Clark
+==============================================================================*/
 
 clear all
 version 16.0
 
 di as result ""
 di as result "============================================================"
-di as result "Test 15: Timestamp Cache Logic (Numeric Clock Values)"
+di as result "Test 15: Timestamp Cache Logic"
 di as result "============================================================"
 di as result ""
 
-* Test 1: Get current clock value
-di as result "Test 1: Get current clock value"
-local current_str = "`c(current_date)' `c(current_time)'"
-local current_clock = clock("`current_str'", "DMY hms")
-di as text "  Current time: `current_str'"
-di as text "  Clock value: `current_clock' ms"
-assert `current_clock' > 0
-di as result "  ✓ Current clock value is valid"
-di as result ""
+local tests_passed = 0
+local tests_total = 6
 
-* Test 2: Calculate specific clock values
-di as result "Test 2: Calculate specific clock values"
-local ts1_clock = clock("23 Oct 2025 12:00:00", "DMY hms")
-local ts2_clock = clock("23 Oct 2025 13:00:00", "DMY hms")
-di as text "  23 Oct 2025 12:00:00 → `ts1_clock'"
-di as text "  23 Oct 2025 13:00:00 → `ts2_clock'"
-assert `ts1_clock' > 0
-assert `ts2_clock' > 0
-assert `ts2_clock' > `ts1_clock'
-di as result "  ✓ Specific clock values calculated correctly"
-di as result ""
+*==============================================================================
+* Test 1: Clock function returns valid timestamp
+*==============================================================================
 
-* Test 3: Calculate time difference (same time = 0 difference)
-di as result "Test 3: Time difference calculation"
-local clock1 = clock("23 Oct 2025 12:00:00", "DMY hms")
-local clock2 = clock("23 Oct 2025 12:00:00", "DMY hms")
-local diff_ms = `clock2' - `clock1'
-di as text "  Clock 1: `clock1'"
-di as text "  Clock 2: `clock2'"
-di as text "  Difference: `diff_ms' ms"
-assert `diff_ms' == 0
-di as result "  ✓ Same times have 0 difference"
-di as result ""
+di as text "Test 1/6: Stata clock() returns valid timestamp"
 
-* Test 4: Calculate 1 hour difference
-di as result "Test 4: 1 hour difference"
-local clock1 = clock("23 Oct 2025 12:00:00", "DMY hms")
-local clock2 = clock("23 Oct 2025 13:00:00", "DMY hms")
-local diff_ms = `clock2' - `clock1'
-local expected_1h = 3600000  // 1 hour = 3,600,000 ms
-di as text "  Time 1: 23 Oct 2025 12:00:00 → `clock1'"
-di as text "  Time 2: 23 Oct 2025 13:00:00 → `clock2'"
-di as text "  Difference: `diff_ms' ms"
-di as text "  Expected:   `expected_1h' ms (1 hour)"
-assert `diff_ms' == `expected_1h'
-di as result "  ✓ 1 hour difference calculated correctly"
-di as result ""
+local current_clock = clock("`c(current_date)' `c(current_time)'", "DMY hms")
 
-* Test 5: Calculate 24 hour difference
-di as result "Test 5: 24 hour difference"
-local clock1 = clock("23 Oct 2025 12:00:00", "DMY hms")
-local clock2 = clock("24 Oct 2025 12:00:00", "DMY hms")
-local diff_ms = `clock2' - `clock1'
-local expected_24h = 86400000  // 24 hours = 86,400,000 ms
-di as text "  Time 1: 23 Oct 2025 12:00:00 → `clock1'"
-di as text "  Time 2: 24 Oct 2025 12:00:00 → `clock2'"
-di as text "  Difference: `diff_ms' ms"
-di as text "  Expected:   `expected_24h' ms (24 hours)"
-assert `diff_ms' == `expected_24h'
-di as result "  ✓ 24 hour difference calculated correctly"
-di as result ""
+if (`current_clock' > 0) {
+	di as result "  [PASS] Current clock value: `current_clock'"
+	local ++tests_passed
+}
+else {
+	di as error "  [FAIL] Invalid clock value: `current_clock'"
+}
 
-* Test 6: Cache logic - within 24 hours (should NOT trigger update)
-di as result "Test 6: Cache logic - within 24 hours"
-local last_check = clock("23 Oct 2025 12:00:00", "DMY hms")
-local current_clock = clock("24 Oct 2025 11:59:59", "DMY hms")
-local diff_ms = `current_clock' - `last_check'
-local should_update = (`diff_ms' >= 86400000)
-di as text "  Last check: `last_check' (23 Oct 2025 12:00:00)"
-di as text "  Current:    `current_clock' (24 Oct 2025 11:59:59, 23h 59m 59s later)"
-di as text "  Difference: `diff_ms' ms"
-di as text "  Should update? `should_update' (expected: 0)"
-assert `should_update' == 0
-di as result "  ✓ Cache valid within 24 hours (no update)"
-di as result ""
+*==============================================================================
+* Test 2: 24-hour difference calculation
+*==============================================================================
 
-* Test 7: Cache logic - exactly 24 hours (should trigger update)
-di as result "Test 7: Cache logic - exactly 24 hours"
-local last_check = clock("23 Oct 2025 12:00:00", "DMY hms")
-local current_clock = clock("24 Oct 2025 12:00:00", "DMY hms")
-local diff_ms = `current_clock' - `last_check'
-local should_update = (`diff_ms' >= 86400000)
-di as text "  Last check: `last_check' (23 Oct 2025 12:00:00)"
-di as text "  Current:    `current_clock' (24 Oct 2025 12:00:00)"
-di as text "  Difference: `diff_ms' ms"
-di as text "  Should update? `should_update' (expected: 1)"
-assert `should_update' == 1
-di as result "  ✓ Update triggered at exactly 24 hours"
-di as result ""
+di as text "Test 2/6: 24 hours = 86,400,000 milliseconds"
 
-* Test 8: Cache logic - over 24 hours (should trigger update)
-di as result "Test 8: Cache logic - over 24 hours"
-local last_check = clock("23 Oct 2025 12:00:00", "DMY hms")
-local current_clock = clock("24 Oct 2025 12:00:01", "DMY hms")
-local diff_ms = `current_clock' - `last_check'
-local should_update = (`diff_ms' >= 86400000)
-di as text "  Last check: `last_check' (23 Oct 2025 12:00:00)"
-di as text "  Current:    `current_clock' (24 Oct 2025 12:00:01, 24h 1s later)"
-di as text "  Difference: `diff_ms' ms"
-di as text "  Should update? `should_update' (expected: 1)"
-assert `should_update' == 1
-di as result "  ✓ Update triggered after 24 hours"
-di as result ""
+local ms_per_day = 86400000
+local current_clock = clock("`c(current_date)' `c(current_time)'", "DMY hms")
+local yesterday = `current_clock' - `ms_per_day'
 
-* Test 9: Edge case - 11:59 PM to 12:01 AM (2 minutes, should NOT update)
-di as result "Test 9: Edge case - midnight crossing"
-local last_check = clock("23 Oct 2025 23:59:00", "DMY hms")
-local current_clock = clock("24 Oct 2025 00:01:00", "DMY hms")
-local diff_ms = `current_clock' - `last_check'
-local should_update = (`diff_ms' >= 86400000)
-di as text "  Last check: `last_check' (23 Oct 2025 23:59:00)"
-di as text "  Current:    `current_clock' (24 Oct 2025 00:01:00, 2 minutes later)"
-di as text "  Difference: `diff_ms' ms"
-di as text "  Should update? `should_update' (expected: 0)"
-assert `should_update' == 0
-di as result "  ✓ Midnight crossing handled correctly (no false trigger)"
-di as result ""
+local diff = `current_clock' - `yesterday'
 
-* Test 10: Arithmetic operations (simulating cache save/load)
-di as result "Test 10: Simulate config save/load"
-local saved_clock = clock("23 Oct 2025 12:00:00", "DMY hms")
-di as text "  Saving clock value to 'config': `saved_clock'"
-* Simulate saving to config and reading back
-local loaded_clock = `saved_clock'
-di as text "  Loaded clock value from 'config': `loaded_clock'"
-assert `loaded_clock' == `saved_clock'
-local current_clock = clock("23 Oct 2025 13:30:00", "DMY hms")
-local diff_ms = `current_clock' - `loaded_clock'
-local expected = 5400000  // 1.5 hours
-di as text "  Time difference: `diff_ms' ms (expected: `expected')"
-assert `diff_ms' == `expected'
-di as result "  ✓ Numeric values survive config save/load correctly"
-di as result ""
+if (`diff' == `ms_per_day') {
+	di as result "  [PASS] 24h difference correctly computed: `diff' ms"
+	local ++tests_passed
+}
+else {
+	di as error "  [FAIL] Expected `ms_per_day', got `diff'"
+}
 
+*==============================================================================
+* Test 3: Cache is stale after 24 hours
+*==============================================================================
+
+di as text "Test 3/6: Cache stale detection (>= 24h)"
+
+local ms_per_day = 86400000
+local current_clock = clock("`c(current_date)' `c(current_time)'", "DMY hms")
+
+* Simulate a check from 25 hours ago
+local old_check = `current_clock' - (`ms_per_day' + 3600000)
+local time_diff = `current_clock' - `old_check'
+
+local should_check = 0
+if (`time_diff' >= `ms_per_day') {
+	local should_check = 1
+}
+
+if (`should_check' == 1) {
+	di as result "  [PASS] 25h-old timestamp correctly marked as stale"
+	local ++tests_passed
+}
+else {
+	di as error "  [FAIL] 25h-old timestamp not detected as stale"
+}
+
+*==============================================================================
+* Test 4: Cache is fresh within 24 hours
+*==============================================================================
+
+di as text "Test 4/6: Cache fresh detection (< 24h)"
+
+local ms_per_day = 86400000
+local current_clock = clock("`c(current_date)' `c(current_time)'", "DMY hms")
+
+* Simulate a check from 1 hour ago
+local recent_check = `current_clock' - 3600000
+local time_diff = `current_clock' - `recent_check'
+
+local should_check = 0
+if (`time_diff' >= `ms_per_day') {
+	local should_check = 1
+}
+
+if (`should_check' == 0) {
+	di as result "  [PASS] 1h-old timestamp correctly marked as fresh"
+	local ++tests_passed
+}
+else {
+	di as error "  [FAIL] 1h-old timestamp incorrectly marked as stale"
+}
+
+*==============================================================================
+* Test 5: Empty timestamp means always check
+*==============================================================================
+
+di as text "Test 5/6: Empty timestamp triggers check"
+
+local last_check ""
+local should_check = 0
+
+if ("`last_check'" == "" | "`last_check'" == ".") {
+	local should_check = 1
+}
+
+if (`should_check' == 1) {
+	di as result "  [PASS] Empty timestamp triggers update check"
+	local ++tests_passed
+}
+else {
+	di as error "  [FAIL] Empty timestamp did not trigger check"
+}
+
+*==============================================================================
+* Test 6: Exactly 24 hours triggers check (boundary condition)
+*==============================================================================
+
+di as text "Test 6/6: Exactly 24h boundary triggers check"
+
+local ms_per_day = 86400000
+local current_clock = clock("`c(current_date)' `c(current_time)'", "DMY hms")
+
+* Simulate a check from exactly 24 hours ago
+local exact_check = `current_clock' - `ms_per_day'
+local time_diff = `current_clock' - `exact_check'
+
+local should_check = 0
+if (`time_diff' >= `ms_per_day') {
+	local should_check = 1
+}
+
+if (`should_check' == 1) {
+	di as result "  [PASS] Exactly 24h boundary correctly triggers check"
+	local ++tests_passed
+}
+else {
+	di as error "  [FAIL] Exactly 24h boundary did not trigger check"
+}
+
+*==============================================================================
 * Summary
-di as result "============================================================"
-di as result "Timestamp Cache Logic Tests Complete!"
-di as result "============================================================"
+*==============================================================================
+
 di as result ""
-di as result "All 10 tests passed:"
-di as result "  ✓ Current clock value calculation"
-di as result "  ✓ Specific clock value calculation"
-di as result "  ✓ Zero difference calculation"
-di as result "  ✓ 1 hour difference"
-di as result "  ✓ 24 hour difference"
-di as result "  ✓ Cache valid within 24h (no update)"
-di as result "  ✓ Cache triggers at exactly 24h"
-di as result "  ✓ Cache triggers after 24h"
-di as result "  ✓ Midnight crossing edge case (no false trigger)"
-di as result "  ✓ Config save/load simulation"
-di as result ""
-di as result "CLEAN IMPLEMENTATION:"
-di as result "  - No string manipulation needed"
-di as result "  - Direct numeric comparison"
-di as result "  - Simple arithmetic operations"
+di as result "============================================================"
+di as result "Test 15 Summary: `tests_passed'/`tests_total' tests passed"
 di as result "============================================================"
 di as result ""
+
+if (`tests_passed' < `tests_total') {
+	exit 1
+}

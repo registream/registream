@@ -1,18 +1,17 @@
 * =============================================================================
 * RegiStream Update Checker
-* Check for package updates and dataset updates
+* Handles package update detection via heartbeat and notification display.
+* All update checks go through the /api/v1/heartbeat endpoint which
+* returns per-module version info (registream, autolabel, datamirror).
+*
+* State passes via rclass return values and the config file — no globals.
+* Callers:
+*   - send_heartbeat returns r(update_available), r(latest_version),
+*     r(autolabel_update), r(autolabel_latest), r(datamirror_update),
+*     r(datamirror_latest), r(reason).
+*   - show_notification takes the above as options plus scope().
 * Usage: _rs_updates subcommand [args]
 * =============================================================================
-
-cap program drop _rs_updates
-cap program drop _upd_check_package
-cap program drop _upd_check_background
-cap program drop _upd_show_notification
-cap program drop _upd_send_heartbeat
-cap program drop _upd_check_datasets
-cap program drop _upd_update_datasets_interactive
-cap program drop _upd_scan_datasets
-cap program drop _upd_rebuild_yaml
 
 program define _rs_updates, rclass
 	version 16.0
@@ -23,32 +22,11 @@ program define _rs_updates, rclass
 		_upd_check_package `0'
 		return add
 	}
-	else if ("`subcmd'" == "check_background") {
-		_upd_check_background `0'
-		return add
-	}
 	else if ("`subcmd'" == "show_notification") {
 		_upd_show_notification `0'
-		return add
 	}
 	else if ("`subcmd'" == "send_heartbeat") {
 		_upd_send_heartbeat `0'
-		return add
-	}
-	else if ("`subcmd'" == "check_datasets") {
-		_upd_check_datasets `0'
-		return add
-	}
-	else if ("`subcmd'" == "update_datasets_interactive") {
-		_upd_update_datasets_interactive `0'
-		return add
-	}
-	else if ("`subcmd'" == "scan_datasets") {
-		_upd_scan_datasets `0'
-		return add
-	}
-	else if ("`subcmd'" == "rebuild_yaml") {
-		_upd_rebuild_yaml `0'
 		return add
 	}
 	else {
@@ -58,255 +36,219 @@ program define _rs_updates, rclass
 end
 
 * -----------------------------------------------------------------------------
-* check_package: Check if there's a newer version of RegiStream available
-* Args: registream_dir, current_version (passed from entry point)
-* Returns: r(update_available) = 1 if update available, 0 otherwise
-*          r(current_version) = current version (e.g., "2.0.0")
-*          r(latest_version) = latest version from API
+* check_package: Interactive update check for `registream update` command
+* Delegates to send_heartbeat (the single source of truth). Forces a fresh
+* check by expiring the 24h cache.
+*
+* Positional args (all quoted):
+*   1. registream_dir
+*   2. current_version (core version)
+*   3. command_string
+*   4. module           — calling module ("" for core/meta)
+*   5. module_version   — calling module's version ("" for core/meta)
+*   6. autolabel_ver    — pre-detected autolabel version for TRK sweep
+*   7. datamirror_ver   — pre-detected datamirror version for TRK sweep
+*
+* Returns: r(update_available), r(current_version), r(latest_version),
+*          r(autolabel_update), r(autolabel_latest),
+*          r(datamirror_update), r(datamirror_latest), r(reason)
 * -----------------------------------------------------------------------------
 program define _upd_check_package, rclass
-	args registream_dir current_version
+	gettoken registream_dir 0 : 0
+	gettoken current_version 0 : 0
+	gettoken command_string 0 : 0, qed(q)
+	gettoken module 0 : 0
+	gettoken module_version 0 : 0
+	gettoken al_ver 0 : 0
+	gettoken dm_ver 0 : 0
 
-	* If current_version not provided, use global override (for testing/dev)
-	* In production, version should always be passed as parameter from entry point
 	if ("`current_version'" == "") {
-		if ("$REGISTREAM_VERSION" != "") {
-			local current_version "$REGISTREAM_VERSION"
-		}
-		else {
-			di as error "_rs_updates: version not provided and \$REGISTREAM_VERSION not set"
-			exit 198
-		}
+		di as error "_rs_updates: version not provided"
+		exit 198
 	}
 
-	* Check internet access setting
+	* Check internet access first (fast exit)
 	_rs_config get "`registream_dir'" "internet_access"
 	if (r(found) == 1 & "`r(value)'" == "false") {
-		* Internet access disabled
 		return scalar update_available = 0
 		return local current_version "`current_version'"
 		return local latest_version ""
+		return scalar autolabel_update = 0
+		return local autolabel_latest ""
+		return scalar datamirror_update = 0
+		return local datamirror_latest ""
 		return local reason "internet_disabled"
 		exit 0
 	}
 
-	* Get API host
-	_rs_utils get_api_host
-	local api_host "`r(host)'"
+	* Expire cache to force immediate check (user explicitly asked)
+	local now = clock("`c(current_date)' `c(current_time)'", "DMY hms")
+	local old = `now' - 90000000
+	_rs_config set "`registream_dir'" "last_update_check" "`old'"
 
-	* Construct version check endpoint with Stata format
-	local version_url "`api_host'/api/v1/stata/version?format=stata"
+	* Delegate to heartbeat (positional: dir ver cmd module mv al dm)
+	cap noi _rs_updates send_heartbeat "`registream_dir'" "`current_version'" ///
+		`"`command_string'"' "`module'" "`module_version'" "`al_ver'" "`dm_ver'"
 
-	* Fetch latest version from API using native Stata copy (no shell commands)
-	tempfile version_response
-	cap copy "`version_url'" "`version_response'", replace
 	if (_rc != 0) {
-		* Network error or timeout
 		return scalar update_available = 0
 		return local current_version "`current_version'"
 		return local latest_version ""
+		return scalar autolabel_update = 0
+		return local autolabel_latest ""
+		return scalar datamirror_update = 0
+		return local datamirror_latest ""
 		return local reason "network_error"
 		exit 0
 	}
 
-	* Parse Stata format response (key=value pairs, one per line)
-	local latest_version ""
-	tempname fh
-	cap file open `fh' using "`version_response'", read text
-	if (_rc == 0) {
-		file read `fh' line
-		while (r(eof) == 0) {
-			* Parse version=X.Y.Z
-			if (regexm("`line'", "^version=(.+)$")) {
-				local latest_version = trim(regexs(1))
-			}
-			file read `fh' line
-		}
-		file close `fh'
-	}
-
-	* Check if version was successfully extracted
-	if ("`latest_version'" == "") {
-		return scalar update_available = 0
-		return local current_version "`current_version'"
-		return local latest_version ""
-		return local reason "parse_error"
-		exit 0
-	}
-
-	* Compare versions semantically (X.Y.Z format)
-	* Update is available only if latest > current, not just different
-	local update_available = 0
-
-	if ("`latest_version'" != "" & "`latest_version'" != "`current_version'") {
-		* Parse current version (X.Y.Z)
-		if (regexm("`current_version'", "^([0-9]+)\.([0-9]+)\.([0-9]+)")) {
-			local cur_major = regexs(1)
-			local cur_minor = regexs(2)
-			local cur_patch = regexs(3)
-		}
-		else {
-			* Invalid current version format, assume update needed
-			local update_available = 1
-		}
-
-		* Parse latest version (X.Y.Z)
-		if (regexm("`latest_version'", "^([0-9]+)\.([0-9]+)\.([0-9]+)")) {
-			local lat_major = regexs(1)
-			local lat_minor = regexs(2)
-			local lat_patch = regexs(3)
-		}
-		else {
-			* Invalid latest version format, can't compare
-			local update_available = 0
-		}
-
-		* Semantic comparison: latest > current
-		if ("`cur_major'" != "" & "`lat_major'" != "") {
-			if (`lat_major' > `cur_major') {
-				local update_available = 1
-			}
-			else if (`lat_major' == `cur_major') {
-				if (`lat_minor' > `cur_minor') {
-					local update_available = 1
-				}
-				else if (`lat_minor' == `cur_minor') {
-					if (`lat_patch' > `cur_patch') {
-						local update_available = 1
-					}
-				}
-			}
-		}
-	}
-
-	* Return results (timestamp updated by caller only on success)
-	return scalar update_available = `update_available'
+	return scalar update_available = r(update_available)
+	return local latest_version "`r(latest_version)'"
 	return local current_version "`current_version'"
-	return local latest_version "`latest_version'"
-	return local reason "success"
+	return scalar autolabel_update = r(autolabel_update)
+	return local autolabel_latest "`r(autolabel_latest)'"
+	return scalar datamirror_update = r(datamirror_update)
+	return local datamirror_latest "`r(datamirror_latest)'"
+	return local reason "`r(reason)'"
 end
 
 * -----------------------------------------------------------------------------
-* check_background: Silently check for updates in background (24h cache)
-* Called automatically before autolabel commands execute
-* Sets globals: $REGISTREAM_UPDATE_AVAILABLE, $REGISTREAM_LATEST_VERSION
-* Returns: Nothing (silent operation)
-* -----------------------------------------------------------------------------
-program define _upd_check_background
-	args registream_dir current_version
-
-	* Clear any previous update notifications
-	global REGISTREAM_UPDATE_AVAILABLE = 0
-	global REGISTREAM_LATEST_VERSION ""
-
-	* Check if auto_update_check is enabled (default: true)
-	_rs_config get "`registream_dir'" "auto_update_check"
-	if (r(found) == 1 & "`r(value)'" == "false") {
-		* Auto-update check disabled
-		exit 0
-	}
-
-	* Check last_update_check timestamp (stored as numeric clock value)
-	_rs_config get "`registream_dir'" "last_update_check"
-	local last_check "`r(value)'"
-
-	* Get current time as Stata clock (ms since 1960-01-01)
-	local current_clock = clock("`c(current_date)' `c(current_time)'", "DMY hms")
-
-	* If last_check is empty or > 24 hours ago, check for updates
-	local should_check = 0
-
-	if ("`last_check'" == "" | "`last_check'" == ".") {
-		* Never checked before
-		local should_check = 1
-	}
-	else {
-		* Calculate time difference in milliseconds
-		local time_diff_ms = `current_clock' - `last_check'
-
-		* 24 hours = 86,400,000 milliseconds
-		if (`time_diff_ms' >= 86400000) {
-			local should_check = 1
-		}
-	}
-
-	* If we should check, do it silently
-	if (`should_check' == 1) {
-		* Call check_package silently (capture all output)
-		cap qui _rs_updates check_package "`registream_dir'" "`current_version'"
-
-		* Save return values to locals IMMEDIATELY (before any other commands that might clear r())
-		local rc_value = _rc
-		local upd_avail = r(update_available)
-		local latest_ver "`r(latest_version)'"
-		local reason "`r(reason)'"
-
-		if (`rc_value' == 0) {
-			* Store results in globals AND config (persistent across sessions)
-			global REGISTREAM_UPDATE_AVAILABLE = `upd_avail'
-
-			* Persist to config for cross-session "harassment"
-			if (`upd_avail' == 1) {
-				global REGISTREAM_LATEST_VERSION "`latest_ver'"
-				cap _rs_config set "`registream_dir'" "update_available" "true"
-				cap _rs_config set "`registream_dir'" "latest_version" "`latest_ver'"
-			}
-			else {
-				global REGISTREAM_LATEST_VERSION ""
-				cap _rs_config set "`registream_dir'" "update_available" "false"
-				cap _rs_config set "`registream_dir'" "latest_version" ""
-			}
-
-			* Only update last_update_check if API call succeeded
-			* Store as numeric clock value (ms since 1960) for easy comparison
-			if ("`reason'" == "success") {
-				cap _rs_config set "`registream_dir'" "last_update_check" "`current_clock'"
-			}
-		}
-	}
-	* Always read from config to catch persistent notifications
-	_rs_config get "`registream_dir'" "update_available"
-	if (r(found) == 1 & "`r(value)'" == "true") {
-		global REGISTREAM_UPDATE_AVAILABLE = 1
-		_rs_config get "`registream_dir'" "latest_version"
-		global REGISTREAM_LATEST_VERSION "`r(value)'"
-	}
-end
-
-* -----------------------------------------------------------------------------
-* show_notification: Display update notification if update is available
-* Reads from globals set by check_background
-* Call this at the end of commands to show non-intrusive update message
+* show_notification: Display update banner(s) for whichever flags are set.
+* Takes flags as options — no globals.
+*
+* Scope policy (2026-04-17 decision): core always; siblings suppressed.
+*   scope="" or "core" : notify about registream + autolabel + datamirror
+*                        (explicit `registream update` meta-command)
+*   scope="autolabel"  : notify about registream + autolabel only
+*   scope="datamirror" : notify about registream + datamirror only
+*
+* Options:
+*   current_version(str)      caller's core version (shown in banner)
+*   scope(str)                core|autolabel|datamirror (default: core)
+*   core_update(0/1)          core update flag
+*   core_latest(str)          core latest version
+*   autolabel_update(0/1)     autolabel update flag
+*   autolabel_latest(str)     autolabel latest version
+*   datamirror_update(0/1)    datamirror update flag
+*   datamirror_latest(str)    datamirror latest version
 * -----------------------------------------------------------------------------
 program define _upd_show_notification
-	args current_version
+	syntax , Current_version(string) ///
+		[SCope(string) ///
+		Core_update(integer 0) Core_latest(string) ///
+		Autolabel_update(integer 0) Autolabel_latest(string) ///
+		Datamirror_update(integer 0) Datamirror_latest(string)]
 
-	* Check if update is available (from background check)
-	if ("$REGISTREAM_UPDATE_AVAILABLE" == "1") {
+	* Default scope is "core" (= show all modules) when unspecified.
+	if ("`scope'" == "") local scope "core"
+
+	* Core banner: always shown when an update is available (and cached
+	* latest differs from current, guarding against stale cache).
+	if (`core_update' == 1 & "`current_version'" != "`core_latest'") {
 		di as text ""
 		di as result "{hline 60}"
-		di as result "A new version of RegiStream is available!"
+		di as result "A new version of registream is available!"
 		di as text "  Current version:  `current_version'"
-		di as text "  Latest version:   $REGISTREAM_LATEST_VERSION"
+		di as text "  Latest version:   `core_latest'"
 		di as text ""
 		di as text "To update, run: {stata registream update:registream update}"
 		di as result "{hline 60}"
 		di as text ""
 	}
+
+	* Autolabel banner: shown in core scope or when autolabel is the caller.
+	if ("`scope'" == "core" | "`scope'" == "autolabel") {
+		if (`autolabel_update' == 1 & "`autolabel_latest'" != "") {
+			di as text ""
+			di as result "{hline 60}"
+			di as result "A new version of autolabel is available!"
+			di as text "  Latest version:   `autolabel_latest'"
+			di as text ""
+			di as text "To update:"
+			di as text `"  cap ado uninstall autolabel"'
+			di as text `"  net install autolabel, from("https://registream.org/install/stata/latest") replace"'
+			di as result "{hline 60}"
+			di as text ""
+		}
+	}
+
+	* Datamirror banner: shown in core scope or when datamirror is the caller.
+	if ("`scope'" == "core" | "`scope'" == "datamirror") {
+		if (`datamirror_update' == 1 & "`datamirror_latest'" != "") {
+			di as text ""
+			di as result "{hline 60}"
+			di as result "A new version of datamirror is available!"
+			di as text "  Latest version:   `datamirror_latest'"
+			di as text ""
+			di as text "To update:"
+			di as text `"  cap ado uninstall datamirror"'
+			di as text `"  net install datamirror, from("https://registream.org/install/stata/latest") replace"'
+			di as result "{hline 60}"
+			di as text ""
+		}
+	}
 end
 
 * -----------------------------------------------------------------------------
-* send_heartbeat: Consolidated telemetry + update check via native Stata copy
-* TELEMETRY: Sent on EVERY command (if enabled) to track usage
-* UPDATES: Checked once per 24 hours (proper timestamp comparison, not just date)
-* Uses GET request with query params - ZERO shell commands, ZERO flashes
-* Args: registream_dir, current_version, command_string
-* Returns: Updates globals if update available
+* send_heartbeat: Consolidated telemetry + update check via heartbeat API
+* TELEMETRY: batched usage rows newer than last_update_check (parity with
+*   Python _read_usage_since / R read_pending_usage). No session global.
+* UPDATES: Checked once per 24 hours; cache-hit rehydrates per-module
+*   update state from config into r() return values.
+*
+* Positional args (all quoted):
+*   1. registream_dir
+*   2. current_version (core version)
+*   3. command_string
+*   4. module           — caller's module name ("" for core/meta)
+*   5. module_version   — caller's module version
+*   6. autolabel_ver    — pre-detected autolabel version (TRK sweep)
+*   7. datamirror_ver   — pre-detected datamirror version (TRK sweep)
+*
+* Returns (rclass):
+*   r(update_available)   core update flag (0/1)
+*   r(latest_version)     core latest version string
+*   r(autolabel_update)   autolabel update flag (0/1)
+*   r(autolabel_latest)   autolabel latest version string
+*   r(datamirror_update)  datamirror update flag (0/1)
+*   r(datamirror_latest)  datamirror latest version string
+*   r(reason)             "success" | "cached" | "internet_disabled" |
+*                         "network_error"
 * -----------------------------------------------------------------------------
-program define _upd_send_heartbeat
-	args registream_dir current_version command_string
+program define _upd_send_heartbeat, rclass
+	gettoken registream_dir 0 : 0
+	gettoken current_version 0 : 0
+	gettoken command_string 0 : 0, qed(q)
+	gettoken module 0 : 0
+	gettoken module_version 0 : 0
+	gettoken al_ver 0 : 0
+	gettoken dm_ver 0 : 0
 
-	* Get settings
+	* Resolve per-module versions: if caller passed explicit al_ver/dm_ver,
+	* use those; else infer from module()/module_version() when the caller
+	* IS that module.
+	if ("`al_ver'" == "" & "`module'" == "autolabel") local al_ver "`module_version'"
+	if ("`dm_ver'" == "" & "`module'" == "datamirror") local dm_ver "`module_version'"
+
+	* Default return: everything zero/empty; overwritten below.
+	return scalar update_available = 0
+	return local latest_version ""
+	return scalar autolabel_update = 0
+	return local autolabel_latest ""
+	return scalar datamirror_update = 0
+	return local datamirror_latest ""
+	return local reason "success"
+
+	* Check internet access; skip everything if offline
+	_rs_config get "`registream_dir'" "internet_access"
+	local internet_access "`r(value)'"
+	if ("`internet_access'" == "") local internet_access "true"
+
+	if ("`internet_access'" == "false") {
+		return local reason "internet_disabled"
+		exit 0
+	}
+
 	_rs_config get "`registream_dir'" "telemetry_enabled"
 	local telemetry_enabled "`r(value)'"
 
@@ -314,58 +256,54 @@ program define _upd_send_heartbeat
 	local update_enabled "`r(value)'"
 	if ("`update_enabled'" == "") local update_enabled "true"
 
-	* Determine if we should send telemetry (every command if enabled)
 	local send_telemetry = 0
 	if ("`telemetry_enabled'" == "true" | "`telemetry_enabled'" == "1") {
 		local send_telemetry = 1
 	}
 
-	* Get current time as Stata clock (ms since 1960-01-01)
 	local current_clock = clock("`c(current_date)' `c(current_time)'", "DMY hms")
 
-	* Determine if we should check for updates (once per 24 hours if enabled)
 	local check_updates = 0
 	if ("`update_enabled'" == "true" | "`update_enabled'" == "1") {
 		_rs_config get "`registream_dir'" "last_update_check"
 		local last_check "`r(value)'"
 
 		if ("`last_check'" == "" | "`last_check'" == ".") {
-			* Never checked before
 			local check_updates = 1
 		}
 		else {
-			* Calculate time difference in milliseconds
 			local time_diff_ms = `current_clock' - `last_check'
-
-			* 24 hours = 86,400,000 milliseconds
 			if (`time_diff_ms' >= 86400000) {
 				local check_updates = 1
 			}
 		}
 	}
 
-	* If cache is still valid (not checking for updates), read cached values and set globals
+	* Cache-hit: rehydrate ALL fields (core + modules) from config and
+	* return. No network call.
 	if (`check_updates' == 0) {
-		* Read cached update info from config
 		_rs_config get "`registream_dir'" "update_available"
 		if (r(found) == 1 & "`r(value)'" == "true") {
-			global REGISTREAM_UPDATE_AVAILABLE = 1
+			return scalar update_available = 1
 			_rs_config get "`registream_dir'" "latest_version"
-			global REGISTREAM_LATEST_VERSION "`r(value)'"
-		}
-		else {
-			global REGISTREAM_UPDATE_AVAILABLE = 0
-			global REGISTREAM_LATEST_VERSION ""
+			return local latest_version "`r(value)'"
 		}
 
-		* If also not sending telemetry, we're done
-		if (`send_telemetry' == 0) {
-			exit 0
+		_rs_config get "`registream_dir'" "autolabel_update_available"
+		if (r(found) == 1 & "`r(value)'" == "true") {
+			return scalar autolabel_update = 1
+			_rs_config get "`registream_dir'" "autolabel_latest_version"
+			return local autolabel_latest "`r(value)'"
 		}
-	}
 
-	* If neither telemetry nor updates needed, exit (cache globals already set above if needed)
-	if (`send_telemetry' == 0 & `check_updates' == 0) {
+		_rs_config get "`registream_dir'" "datamirror_update_available"
+		if (r(found) == 1 & "`r(value)'" == "true") {
+			return scalar datamirror_update = 1
+			_rs_config get "`registream_dir'" "datamirror_latest_version"
+			return local datamirror_latest "`r(value)'"
+		}
+
+		return local reason "cached"
 		exit 0
 	}
 
@@ -373,23 +311,16 @@ program define _upd_send_heartbeat
 	_rs_utils get_api_host
 	local api_host "`r(host)'"
 
-	* Get timestamp (always needed)
 	local timestamp "`c(current_date)'T`c(current_time)'Z"
 
-	* Build heartbeat URL based on what we're sending
+	* Build heartbeat URL
 	if (`send_telemetry' == 1) {
-		* Get telemetry data
 		_rs_usage compute_user_id "`registream_dir'"
 		local user_id "`r(user_id)'"
 
-		* Get OS info
 		local platform "stata"
 		local os "`c(os)'"
-		if ("`os'" == "Windows") {
-			local os "Windows"
-		}
-		else if ("`os'" == "Unix") {
-			* Distinguish MacOS from Linux
+		if ("`os'" == "Unix") {
 			if ("`c(machine_type)'" == "Macintosh (Intel 64-bit)" | "`c(machine_type)'" == "Macintosh (ARM 64-bit)") {
 				local os "MacOSX"
 			}
@@ -399,743 +330,190 @@ program define _upd_send_heartbeat
 		}
 		local platform_version "`c(stata_version)'"
 
-		* URL encode timestamp (spaces -> %20)
 		local timestamp_encoded : subinstr local timestamp " " "%20", all
 
-		* URL encode command string
-		local command_encoded : subinstr local command_string " " "%20", all
+		* Read batched usage rows since last_update_check from usage_stata.csv
+		* (matches Python/R batching pattern; no session global).
+		_upd_read_pending_usage "`registream_dir'" "`last_check'"
+		local command_to_send `"`r(batch)'"'
+		if ("`command_to_send'" == "") {
+			local command_to_send `"`command_string'"'
+		}
+
+		* URL-encode
+		local command_encoded : subinstr local command_to_send " " "%20", all
 		local command_encoded : subinstr local command_encoded "," "%2C", all
 		local command_encoded : subinstr local command_encoded "(" "%28", all
 		local command_encoded : subinstr local command_encoded ")" "%29", all
+		local command_encoded : subinstr local command_encoded "|" "%7C", all
 
-		* Build URL with telemetry data (always include version for proper tracking)
-		* Add format=stata for reliable parsing
-		local heartbeat_url "`api_host'/api/v1/stata/heartbeat?user_id=`user_id'&command=`command_encoded'&platform=`platform'&os=`os'&platform_version=`platform_version'&timestamp=`timestamp_encoded'&version=`current_version'&format=stata"
+		if (strlen("`command_encoded'") > 1500) {
+			local command_encoded = substr("`command_encoded'", 1, 1500)
+		}
+
+		local heartbeat_url "`api_host'/api/v1/heartbeat?user_id=`user_id'&command=`command_encoded'&platform=`platform'&os=`os'&platform_version=`platform_version'&timestamp=`timestamp_encoded'&registream=`current_version'&format=stata"
 	}
 	else {
-		* Only checking updates, no telemetry data
-		* Add format=stata for reliable parsing
-		local heartbeat_url "`api_host'/api/v1/stata/heartbeat?version=`current_version'&format=stata"
+		local heartbeat_url "`api_host'/api/v1/heartbeat?registream=`current_version'&format=stata"
 	}
 
-	* Use native Stata copy - NO SHELL, NO FLASH!
+	if ("`al_ver'" != "") {
+		local heartbeat_url "`heartbeat_url'&autolabel=`al_ver'"
+	}
+	if ("`dm_ver'" != "") {
+		local heartbeat_url "`heartbeat_url'&datamirror=`dm_ver'"
+	}
+
 	tempfile response
 	cap copy "`heartbeat_url'" "`response'", replace
 
-	if (_rc == 0) {
-		* Parse Stata format response (key=value pairs, one per line)
-		* No JSON parsing needed - simple and reliable
-		local update_available ""
-		local latest_version ""
-
-		tempname fh
-		cap file open `fh' using "`response'", read text
-		if (_rc == 0) {
-			file read `fh' line
-			while (r(eof) == 0) {
-				* Parse update_available=true/false
-				if (regexm("`line'", "^update_available=(.+)$")) {
-					local update_val = trim(regexs(1))
-					if ("`update_val'" == "true") {
-						local update_available = "1"
-					}
-					else {
-						local update_available = "0"
-					}
-				}
-
-				* Parse latest_version=X.Y.Z
-				else if (regexm("`line'", "^latest_version=(.+)$")) {
-					local latest_version = trim(regexs(1))
-				}
-
-				file read `fh' line
-			}
-			file close `fh'
-
-			* Set globals and persist to config
-			if ("`update_available'" == "1") {
-				global REGISTREAM_UPDATE_AVAILABLE = 1
-				global REGISTREAM_LATEST_VERSION "`latest_version'"
-				cap _rs_config set "`registream_dir'" "update_available" "true"
-				cap _rs_config set "`registream_dir'" "latest_version" "`latest_version'"
-			}
-			else {
-				global REGISTREAM_UPDATE_AVAILABLE = 0
-				global REGISTREAM_LATEST_VERSION ""
-				cap _rs_config set "`registream_dir'" "update_available" "false"
-				cap _rs_config set "`registream_dir'" "latest_version" ""
-			}
-
-			* Update last check timestamp ONLY if we checked for updates
-			* Store as numeric clock value (ms since 1960) for easy comparison
-			if (`check_updates' == 1) {
-				cap _rs_config set "`registream_dir'" "last_update_check" "`current_clock'"
-			}
-		}
-	}
-
-	* Silent on all outcomes - heartbeat should never interrupt user workflow
-end
-
-* -----------------------------------------------------------------------------
-* scan_datasets: Scan autolabel_keys directory for DTA files
-* Used to rebuild datasets.csv when it's deleted or corrupted
-* Returns: r(datasets_found) = number of datasets found
-* -----------------------------------------------------------------------------
-program define _upd_scan_datasets, rclass
-	args registream_dir
-
-	local autolabel_dir "`registream_dir'/autolabel_keys"
-
-	* Get list of all .csv files in autolabel_keys (these are the actual downloaded datasets)
-	local csv_files : dir "`autolabel_dir'" files "*.csv"
-
-	local datasets_found = 0
-	local dataset_list ""
-
-	* Parse each CSV filename to extract domain_type_lang
-	foreach csv_file of local csv_files {
-		* Remove .csv extension
-		local dataset_key = subinstr("`csv_file'", ".csv", "", 1)
-
-		* Check if this matches our pattern: {domain}_{variables|value_labels}_{lang}
-		if (regexm("`dataset_key'", "^(.+)_(variables|value_labels)_([a-z]+)$")) {
-			local domain = regexs(1)
-			local type_raw = regexs(2)
-			local lang = regexs(3)
-
-			* Convert type
-			local type = cond("`type_raw'" == "value_labels", "values", "variables")
-
-			* Add to list
-			local dataset_list "`dataset_list' `dataset_key'"
-			local ++datasets_found
-
-			* Try to get schema version from corresponding DTA file
-			local dta_file "`autolabel_dir'/`dataset_key'.dta"
-			local schema_ver ""
-			cap confirm file "`dta_file'"
-			if (_rc == 0) {
-				quietly {
-					preserve
-					cap use "`dta_file'", clear
-					cap local schema_ver : char _dta[schema_version]
-					restore
-				}
-			}
-			* Default to 1.0 if not found
-			if ("`schema_ver'" == "") local schema_ver "1.0"
-
-			* Store information
-			local dataset_`datasets_found'_key "`dataset_key'"
-			local dataset_`datasets_found'_domain "`domain'"
-			local dataset_`datasets_found'_type "`type'"
-			local dataset_`datasets_found'_lang "`lang'"
-			local dataset_`datasets_found'_schema "`schema_ver'"
-		}
-	}
-
-	* Return results
-	return scalar datasets_found = `datasets_found'
-	return local dataset_list "`dataset_list'"
-
-	* Return individual dataset info
-	forval i = 1/`datasets_found' {
-		return local dataset_`i'_key "`dataset_`i'_key'"
-		return local dataset_`i'_domain "`dataset_`i'_domain'"
-		return local dataset_`i'_type "`dataset_`i'_type'"
-		return local dataset_`i'_lang "`dataset_`i'_lang'"
-		return local dataset_`i'_schema "`dataset_`i'_schema'"
-	}
-end
-
-* -----------------------------------------------------------------------------
-* check_datasets: Check for updates to all downloaded datasets
-* Sends bulk request to API with all current dataset versions
-* Returns: r(updates_available) = number of datasets with updates
-* -----------------------------------------------------------------------------
-program define _upd_check_datasets, rclass
-	args registream_dir
-
-	* Check internet access setting
-	_rs_config get "`registream_dir'" "internet_access"
-	if (r(found) == 1 & "`r(value)'" == "false") {
-		* Internet access disabled
-		return scalar updates_available = 0
-		return local reason "internet_disabled"
-		exit 0
-	}
-
-	* Get current time for caching
-	local current_clock = clock("`c(current_date)' `c(current_time)'", "DMY hms")
-
-	* Check 24h cache first
-	_rs_config get "`registream_dir'" "last_dataset_check"
-	local last_check "`r(value)'"
-
-	if ("`last_check'" != "" & "`last_check'" != ".") {
-		* Calculate time difference
-		local time_diff_ms = `current_clock' - `last_check'
-
-		* If less than 24 hours, return cached result
-		if (`time_diff_ms' < 86400000) {
-			_rs_config get "`registream_dir'" "datasets_updates_available"
-			local cached_count = "`r(value)'"
-			if ("`cached_count'" == "" | "`cached_count'" == ".") local cached_count = 0
-
-			return scalar updates_available = `cached_count'
-			return local reason "cached"
-			exit 0
-		}
-	}
-
-	* Read datasets.csv to get current versions
-	local meta_csv "`registream_dir'/autolabel_keys/datasets.csv"
-
-	* If datasets.csv doesn't exist, try to scan and rebuild
-	cap confirm file "`meta_csv'"
 	if (_rc != 0) {
-		di as text ""
-		di as text "{hline 60}"
-		di as result "datasets.csv not found - Scanning directory..."
-		di as text "{hline 60}"
-
-		_rs_updates scan_datasets "`registream_dir'"
-		local scan_count = r(datasets_found)
-
-		if (`scan_count' == 0) {
-			* No datasets found
-			di as text "No datasets found."
-			di as text "{hline 60}"
-			return scalar updates_available = 0
-			return local reason "no_datasets"
-			exit 0
-		}
-
-		* Rebuild CSV from scanned datasets
-		_rs_updates rebuild_yaml "`registream_dir'"
-
-		di as text "{hline 60}"
-		di as text ""
-
-		* Now check if any of the scanned datasets are available for re-download
-		* by sending them with version: "unknown"
-		local should_check_redownload = 1
-	}
-	else {
-		local should_check_redownload = 0
-	}
-
-	* Build GET URL from datasets.csv
-	tempfile response_body
-
-	quietly {
-		* Load datasets.csv
-		cap import delimited using "`meta_csv'", clear varnames(1) stringcols(_all) delimiter(";")
-		if (_rc != 0) {
-			return scalar updates_available = 0
-			return local reason "csv_read_error"
-			exit 0
-		}
-
-		local dataset_count = _N
-
-		if (`dataset_count' == 0) {
-			return scalar updates_available = 0
-			return local reason "no_datasets"
-			exit 0
-		}
-
-		* Keep only needed columns
-		keep version domain type lang dataset_key
-
-		* Build pipe-delimited URL parameter
-		local url_params = ""
-		forval i = 1/`=_N' {
-			local domain_val = domain[`i']
-			local type_val = type[`i']
-			local lang_val = lang[`i']
-			local version_val = version[`i']
-
-			if (`i' > 1) local url_params = "`url_params'|"
-			local url_params = "`url_params'`domain_val';`type_val';`lang_val';`version_val'"
-		}
-
-		* URL encode special characters
-		local url_params : subinstr local url_params "|" "%7C", all
-		local url_params : subinstr local url_params ";" "%3B", all
-	}
-
-	* Check URL length safety (fallback to POST if too long)
-	local url_length = length("`url_params'")
-	if (`url_length' > 1500) {
-		di as error "Too many datasets (`dataset_count') for GET request"
-		di as error "Please contact support - this is a rare edge case"
-		return scalar updates_available = 0
-		return local reason "too_many_datasets"
-		exit 0
-	}
-
-	* Get API host
-	_rs_utils get_api_host
-	local api_host "`r(host)'"
-
-	* Construct GET URL with datasets parameter and Stata format (CSV)
-	local updates_url "`api_host'/api/v1/datasets/check_updates?datasets=`url_params'&format=stata"
-
-	* Use native Stata copy - NO SHELL, NO FLASH!
-	cap copy "`updates_url'" "`response_body'", replace
-
-	if (_rc != 0) {
-		* Network error
-		return scalar updates_available = 0
 		return local reason "network_error"
 		exit 0
 	}
 
-	* Parse CSV response
-	cap qui import delimited using "`response_body'", clear varnames(1)
-	if (_rc == 0 & _N > 0) {
-		* Count updates and re-downloads
-		local updates_count = 0
-		local redownload_count = 0
+	local rs_update ""
+	local rs_latest ""
+	local al_update ""
+	local al_latest ""
+	local dm_update ""
+	local dm_latest ""
 
-		forval i = 1/`=_N' {
-			* Check if update available
-			if (update_available[`i'] == 1) {
-				local ++updates_count
-			}
-
-			* Check if this is a re-download suggestion (unknown version)
-			if (current_version[`i'] == "unknown" & available_for_download[`i'] == 1) {
-				local ++redownload_count
-				local redownload_`redownload_count'_domain = domain[`i']
-				local redownload_`redownload_count'_type = type[`i']
-				local redownload_`redownload_count'_lang = lang[`i']
-				local redownload_`redownload_count'_latest = latest_version[`i']
-			}
-		}
-
-		* If we scanned and rebuilt, show re-download suggestions
-		if (`should_check_redownload' == 1 & `redownload_count' > 0) {
-			di as text ""
-			di as text "{hline 60}"
-			di as result "Datasets Available for Re-download"
-			di as text "{hline 60}"
-			di as text "The following datasets were found but have unknown versions."
-			di as text "They are available for re-download with proper metadata:"
-			di as text ""
-
-			forval i = 1/`redownload_count' {
-				local ds_key "`redownload_`i'_domain'_`redownload_`i'_type'_`redownload_`i'_lang'"
-				di as text "  • {result:`ds_key'} (latest: `redownload_`i'_latest')"
-			}
-
-			di as text ""
-			di as text "To re-download with metadata tracking:"
-			di as text "  autolabel `redownload_1_type', domain(`redownload_1_domain') lang(`redownload_1_lang') force"
-			di as text "{hline 60}"
-			di as text ""
-		}
-
-		* Save to cache
-		cap _rs_config set "`registream_dir'" "last_dataset_check" "`current_clock'"
-		cap _rs_config set "`registream_dir'" "datasets_updates_available" "`updates_count'"
-
-		return scalar updates_available = `updates_count'
-		return scalar redownload_suggested = `redownload_count'
-		return local reason "success"
-	}
-	else {
-		* Save empty cache
-		cap _rs_config set "`registream_dir'" "last_dataset_check" "`current_clock'"
-		cap _rs_config set "`registream_dir'" "datasets_updates_available" "0"
-
-		return scalar updates_available = 0
-		return local reason "parse_error"
-	}
-end
-
-* -----------------------------------------------------------------------------
-* update_datasets_interactive: Interactive workflow for updating datasets
-* Checks for updates, displays list, prompts for selection, downloads
-* Args: registream_dir, domain(optional), lang(optional), version(optional)
-* -----------------------------------------------------------------------------
-program define _upd_update_datasets_interactive, rclass
-	syntax anything [, DOMAIN(string) LANG(string) VERSION(string)]
-	local registream_dir `anything'
-
-	local autolabel_dir "`registream_dir'/autolabel_keys"
-
-	* Check internet access setting
-	_rs_config get "`registream_dir'" "internet_access"
-	if (r(found) == 1 & "`r(value)'" == "false") {
-		di as text "Update check disabled (offline mode)"
-		di as text "To enable: registream config, internet_access(true)"
-		return scalar updates_downloaded = 0
-		return local reason "internet_disabled"
-		exit 0
-	}
-
-	* Read datasets.csv to get current versions
-	local meta_csv "`autolabel_dir'/datasets.csv"
-
-	tempfile response_body
-
-	* Load datasets.csv
-	preserve
-	cap qui import delimited using "`meta_csv'", clear varnames(1) stringcols(_all) delimiter(";")
-
-	if (_rc != 0) {
-		restore
-		di as text "No datasets found to check for updates"
-		di as text "Download datasets first: autolabel variables, domain(scb) lang(eng)"
-		return scalar updates_downloaded = 0
-		return local reason "no_datasets"
-		exit 0
-	}
-
-	if (_N == 0) {
-		restore
-		di as text "No datasets found"
-		return scalar updates_downloaded = 0
-		return local reason "no_datasets"
-		exit 0
-	}
-
-	* Apply filters if specified
-	if ("`domain'" != "") {
-		qui keep if domain == "`domain'"
-	}
-	if ("`lang'" != "") {
-		qui keep if lang == "`lang'"
-	}
-
-	if (_N == 0) {
-		restore
-		di as text "No datasets match the specified filters"
-		return scalar updates_downloaded = 0
-		return local reason "no_matching_datasets"
-		exit 0
-	}
-
-	* Build pipe-delimited URL parameter
-	local url_params = ""
-	forval i = 1/`=_N' {
-		local domain_val = domain[`i']
-		local type_val = type[`i']
-		local lang_val = lang[`i']
-		local version_val = version[`i']
-
-		if (`i' > 1) local url_params = "`url_params'|"
-		local url_params = "`url_params'`domain_val';`type_val';`lang_val';`version_val'"
-	}
-
-	* URL encode special characters
-	local url_params : subinstr local url_params "|" "%7C", all
-	local url_params : subinstr local url_params ";" "%3B", all
-
-	restore
-
-	* Check URL length safety
-	local url_length = length("`url_params'")
-	if (`url_length' > 1500) {
-		di as error "Too many datasets for GET request"
-		di as error "Please contact support - this is a rare edge case"
-		return scalar updates_downloaded = 0
-		return local reason "too_many_datasets"
-		exit 0
-	}
-
-	* Get API host
-	_rs_utils get_api_host
-	local api_host "`r(host)'"
-
-	* Construct GET URL with datasets parameter and Stata format (CSV)
-	local updates_url "`api_host'/api/v1/datasets/check_updates?datasets=`url_params'&format=stata"
-
-	* Use native Stata copy - NO SHELL, NO FLASH!
-	cap copy "`updates_url'" "`response_body'", replace
-
-	if (_rc != 0) {
-		di as text "Could not check for updates (network error)"
-		return scalar updates_downloaded = 0
-		return local reason "network_error"
-		exit 0
-	}
-
-	* Parse CSV response
-	preserve
-	cap qui import delimited using "`response_body'", clear varnames(1) stringcols(_all)
-	if (_rc != 0 | _N == 0) {
-		restore
-		di as error "Error parsing API response"
-		return scalar updates_downloaded = 0
-		return local reason "parse_error"
-		exit 0
-	}
-
-	* If user specified a version, override latest_version BEFORE filtering
-	if ("`version'" != "") {
-		* Normalize version format (remove 'v' prefix if present)
-		local target_version = "`version'"
-		if (regexm("`target_version'", "^v(.+)$")) {
-			local target_version = regexs(1)
-		}
-
-		* Override all latest versions with the user-specified version
-		qui replace latest_version = "`target_version'"
-	}
-
-	* Filter to only show updates/changes
-	if ("`version'" == "") {
-		* Normal mode: only show datasets with updates available
-		qui keep if update_available == "1"
-	}
-	else {
-		* Version specified: keep datasets where current != target
-		* (Skip datasets already at target version - no point re-downloading)
-		qui keep if current_version != latest_version
-	}
-
-	local updates_count = _N
-
-	if (`updates_count' == 0) {
-		restore
-		if ("`version'" != "") {
-			di as result "All datasets are already at version `target_version'!"
-		}
-		else {
-			di as result "All datasets are up to date!"
-		}
-		return scalar updates_downloaded = 0
-		return local reason "no_updates"
-		exit 0
-	}
-
-	* Save update information to locals BEFORE restoring
-	forval i = 1/`updates_count' {
-		local upd_`i'_domain = domain[`i']
-		local upd_`i'_type = type[`i']
-		local upd_`i'_lang = lang[`i']
-		local upd_`i'_current = current_version[`i']
-		local upd_`i'_latest = latest_version[`i']
-	}
-
-	restore
-
-	* Set display note if version was specified
-	if ("`version'" != "") {
-		* target_version was already set earlier
-		local version_note " (target version: `target_version')"
-	}
-	else {
-		local version_note ""
-	}
-
-	* Display numbered list of updates
-	di as text ""
-	if ("`version'" != "") {
-		di as text "Available Datasets`version_note':"
-	}
-	else {
-		di as text "Available Updates:"
-	}
-	di as text "{hline 60}"
-	forval i = 1/`updates_count' {
-		local ds_key "`upd_`i'_domain'_`upd_`i'_type'_`upd_`i'_lang'"
-		di as text %3.0f `i' ".  {result:`ds_key'}"
-		di as text "     Current: `upd_`i'_current' → Target: `upd_`i'_latest'"
-	}
-	di as text "{hline 60}"
-	di as text ""
-
-	* Prompt for selection (NOW outside preserve/restore)
-	di as text "Enter dataset numbers to update (comma-separated), 'all', or 'cancel':"
-	di as input "> " _request(rsinput)
-
-	* _request MUST use global (Stata limitation), copy to local and clear
-	local user_input = trim(lower("$rsinput"))
-	global rsinput ""
-
-	* Check for cancel/quit
-	if ("`user_input'" == "cancel" | "`user_input'" == "q" | "`user_input'" == "quit" | "`user_input'" == "") {
-		di as text ""
-		di as text "Update cancelled"
-		return scalar updates_downloaded = 0
-		return local reason "cancelled"
-		exit 0
-	}
-
-	* Handle 'all' selection
-	if ("`user_input'" == "all") {
-		local selection_count = `updates_count'
-		forval i = 1/`selection_count' {
-			local sel_`i' = `i'
-		}
-	}
-	* Handle comma-separated numbers
-	else {
-		local selection_count = 0
-
-		* Remove all spaces to make parsing easier
-		local user_input : subinstr local user_input " " "", all
-
-		* Split by comma and validate
-		local remaining "`user_input'"
-		while ("`remaining'" != "") {
-			gettoken num remaining : remaining, parse(",")
-
-			* Skip commas and empty strings
-			if ("`num'" == "," | "`num'" == "") continue
-
-			* Validate number
-			cap confirm integer number `num'
-			if (_rc == 0 & `num' >= 1 & `num' <= `updates_count') {
-				local ++selection_count
-				local sel_`selection_count' = `num'
-			}
-		}
-
-		if (`selection_count' == 0) {
-			di as error "No valid selections provided"
-			di as text "Hint: Enter 'all', specific numbers like '1,2', or 'cancel'"
-			return scalar updates_downloaded = 0
-			return local reason "invalid_selection"
-			exit 0
-		}
-	}
-
-	* Map selections to the saved update info
-	* (Data was already saved to upd_* locals and restored earlier)
-
-	* Download selected datasets
-	di as text ""
-	di as result "{hline 60}"
-	di as result "Downloading Updates..."
-	di as result "{hline 60}"
-
-	local downloaded_count = 0
-
-	forval i = 1/`selection_count' {
-		* Map selection to update index
-		local idx = `sel_`i''
-		local ds_domain = "`upd_`idx'_domain'"
-		local ds_type_raw = "`upd_`idx'_type'"
-		local ds_lang = "`upd_`idx'_lang'"
-		local ds_latest = "`upd_`idx'_latest'"
-
-		* Normalize type: API returns "value_labels" or "values", schema expects "values" or "variables"
-		local ds_type = cond("`ds_type_raw'" == "value_labels", "values", "`ds_type_raw'")
-
-		* Convert type for filename: schema type to filename type
-		local file_type = cond("`ds_type'" == "values", "value_labels", "variables")
-		local filename "`ds_domain'_`file_type'_`ds_lang'"
-
-		di as text ""
-		di as result "`i'/`selection_count': `filename'"
-		di as text "  Downloading version `ds_latest'..."
-
-		* Construct file paths
-		local csv_file "`autolabel_dir'/`filename'.csv"
-		local dta_file "`autolabel_dir'/`filename'.dta"
-		local zip_file "`autolabel_dir'/`filename'.zip"
-		local zip_folder "`autolabel_dir'/`filename'"
-
-		* Delete existing files to force re-download
-		cap erase "`csv_file'"
-		cap erase "`dta_file'"
-		cap erase "`zip_file'"
-		cap _rs_utils del_folder_rec "`zip_folder'"
-
-		* Download using autolabel utils (quietly to suppress verbose output)
-		cap qui _rs_autolabel_utils download_extract, ///
-			zip("`zip_file'") zipfold("`zip_folder'") ///
-			csv("`csv_file'") dta("`dta_file'") ///
-			file("`filename'") ///
-			registream_dir("`registream_dir'") ///
-			autolabel_dir("`autolabel_dir'") ///
-			clean("`ds_type'") ///
-			version("`ds_latest'")
-
-		if (_rc == 0) {
-			di as result "  ✓ Downloaded successfully"
-			local ++downloaded_count
-		}
-		else {
-			di as error "  ✗ Download failed"
-		}
-	}
-
-	di as text ""
-	di as result "{hline 60}"
-	di as result "Update Complete: `downloaded_count'/`selection_count' dataset(s) updated"
-	di as result "{hline 60}"
-
-	return scalar updates_downloaded = `downloaded_count'
-	return local reason "success"
-end
-
-* -----------------------------------------------------------------------------
-* rebuild_yaml: Rebuild datasets.csv from scanned DTA files
-* This preserves existing custom entries and adds API-downloaded datasets
-* -----------------------------------------------------------------------------
-program define _upd_rebuild_yaml, rclass
-	args registream_dir
-
-	* Scan for datasets
-	_rs_updates scan_datasets "`registream_dir'"
-	local datasets_found = r(datasets_found)
-
-	if (`datasets_found' == 0) {
-		di as text "No datasets found to rebuild datasets.csv"
-		exit 0
-	}
-
-	* CSV file location
-	local meta_csv "`registream_dir'/autolabel_keys/datasets.csv"
-
-	* Backup existing CSV if it exists
-	cap confirm file "`meta_csv'"
-	if (_rc == 0) {
-		di as text "Note: Existing datasets.csv will be backed up"
-		cap copy "`meta_csv'" "`meta_csv'.backup", replace
-	}
-
-	* Create new CSV file
 	tempname fh
-	file open `fh' using "`meta_csv'", write replace
-
-	* Write header (with explicit domain, type, lang columns)
-	* Using semicolon delimiter for consistency
-	file write `fh' "dataset_key;domain;type;lang;version;schema;downloaded;source;file_size;last_checked" _n
-
-	* Add scanned datasets
-	forval i = 1/`datasets_found' {
-		local key = "`r(dataset_`i'_key)'"
-		local domain = "`r(dataset_`i'_domain)'"
-		local type = "`r(dataset_`i'_type)'"
-		local lang = "`r(dataset_`i'_lang)'"
-		local schema = "`r(dataset_`i'_schema)'"
-
-		* Get file size using Mata (cross-platform: Windows, Mac, Linux)
-		local csv_file "`registream_dir'/autolabel_keys/`key'.csv"
-		local file_size = 0
-		cap confirm file "`csv_file'"
-		if (_rc == 0) {
-			_rs_utils get_filesize "`csv_file'"
-			local file_size = r(size)
-		}
-		if ("`file_size'" == "" | "`file_size'" == ".") local file_size = 0
-
-		* Write CSV row (with explicit domain, type, lang columns)
-		* Using semicolon delimiter
-		file write `fh' "`key';`domain';`type';`lang';unknown;`schema';unknown;scanned;`file_size';" _n
+	cap file open `fh' using "`response'", read text
+	if (_rc != 0) {
+		return local reason "network_error"
+		exit 0
 	}
-
+	file read `fh' line
+	while (r(eof) == 0) {
+		if (regexm("`line'", "^registream_update=(.+)$")) {
+			local rs_update = cond(trim(regexs(1)) == "true", "1", "0")
+		}
+		else if (regexm("`line'", "^registream_latest=(.+)$")) {
+			local rs_latest = trim(regexs(1))
+		}
+		else if (regexm("`line'", "^autolabel_update=(.+)$")) {
+			local al_update = cond(trim(regexs(1)) == "true", "1", "0")
+		}
+		else if (regexm("`line'", "^autolabel_latest=(.+)$")) {
+			local al_latest = trim(regexs(1))
+		}
+		else if (regexm("`line'", "^datamirror_update=(.+)$")) {
+			local dm_update = cond(trim(regexs(1)) == "true", "1", "0")
+		}
+		else if (regexm("`line'", "^datamirror_latest=(.+)$")) {
+			local dm_latest = trim(regexs(1))
+		}
+		file read `fh' line
+	}
 	file close `fh'
 
-	di as result "✓ Rebuilt datasets.csv with `datasets_found' dataset(s)"
-	return scalar datasets_rebuilt = `datasets_found'
+	* Core update flag
+	if ("`rs_update'" == "1") {
+		return scalar update_available = 1
+		return local latest_version "`rs_latest'"
+		cap _rs_config set "`registream_dir'" "update_available" "true"
+		cap _rs_config set "`registream_dir'" "latest_version" "`rs_latest'"
+	}
+	else {
+		cap _rs_config set "`registream_dir'" "update_available" "false"
+		cap _rs_config set "`registream_dir'" "latest_version" ""
+	}
+
+	* Autolabel: only overwrite cache when we asked the server about
+	* autolabel (i.e., al_ver was sent). Preserves prior cached state
+	* for untouched modules.
+	if ("`al_ver'" != "") {
+		if ("`al_update'" == "1") {
+			return scalar autolabel_update = 1
+			return local autolabel_latest "`al_latest'"
+			cap _rs_config set "`registream_dir'" "autolabel_update_available" "true"
+			cap _rs_config set "`registream_dir'" "autolabel_latest_version" "`al_latest'"
+		}
+		else {
+			cap _rs_config set "`registream_dir'" "autolabel_update_available" "false"
+			cap _rs_config set "`registream_dir'" "autolabel_latest_version" ""
+		}
+	}
+
+	* Datamirror: same policy.
+	if ("`dm_ver'" != "") {
+		if ("`dm_update'" == "1") {
+			return scalar datamirror_update = 1
+			return local datamirror_latest "`dm_latest'"
+			cap _rs_config set "`registream_dir'" "datamirror_update_available" "true"
+			cap _rs_config set "`registream_dir'" "datamirror_latest_version" "`dm_latest'"
+		}
+		else {
+			cap _rs_config set "`registream_dir'" "datamirror_update_available" "false"
+			cap _rs_config set "`registream_dir'" "datamirror_latest_version" ""
+		}
+	}
+
+	cap _rs_config set "`registream_dir'" "last_update_check" "`current_clock'"
+end
+
+* -----------------------------------------------------------------------------
+* _upd_read_pending_usage: Read usage_stata.csv rows newer than since_clock,
+* return a pipe-delimited "module command_string" batch in r(batch).
+* Matches Python's _read_usage_since / R's read_pending_usage. No session
+* global needed.
+* -----------------------------------------------------------------------------
+program define _upd_read_pending_usage, rclass
+	args registream_dir since_clock
+
+	return local batch ""
+
+	local usage_file "`registream_dir'/usage_stata.csv"
+	if (!fileexists("`usage_file'")) exit 0
+
+	tempname fh
+	cap file open `fh' using "`usage_file'", read text
+	if (_rc != 0) exit 0
+
+	local batch ""
+	local count 0
+
+	* Skip header
+	file read `fh' line
+
+	file read `fh' line
+	while (r(eof) == 0) {
+		* Columns: timestamp;user_id;platform;module;module_version;core_version;command_string;os;platform_version
+		* tokenize on ";" — real values land at odd token positions.
+		tokenize `"`line'"', parse(";")
+		local ts `"`1'"'
+		local mod `"`7'"'
+		local cmd `"`13'"'
+
+		* Include only rows newer than since_clock (compare as clock ms).
+		local include 1
+		if ("`since_clock'" != "" & "`since_clock'" != ".") {
+			local row_clock = clock("`ts'", "YMDhms")
+			if ("`row_clock'" != "." & `row_clock' <= `since_clock') {
+				local include 0
+			}
+		}
+
+		if (`include' == 1 & `"`cmd'"' != "") {
+			local piece `"`mod' `cmd'"'
+			if ("`batch'" == "") {
+				local batch `"`piece'"'
+			}
+			else {
+				local batch `"`batch'|`piece'"'
+			}
+			local ++count
+			if (`count' >= 50) {
+				* Safety cap on batch size
+				continue, break
+			}
+		}
+
+		file read `fh' line
+	}
+	file close `fh'
+
+	return local batch `"`batch'"'
 end

@@ -1,0 +1,45 @@
+{
+    "registream": {
+        "version": "3.0.0",
+        "release_date": "2026-04-12",
+        "source": "../src",
+        "files": [
+            "registream.ado",
+            "registream.sthlp",
+            "_rs_config.ado",
+            "_rs_metadata.ado",
+            "_rs_updates.ado",
+            "_rs_usage.ado",
+            "_rs_utils.ado"
+        ],
+        "description": "RegiStream core infrastructure",
+        "authors": "Jeffrey Clark, Jie Wen"
+    },
+    "autolabel": {
+        "version": "3.0.0",
+        "release_date": "2026-04-12",
+        "source": "../../../autolabel/stata/src",
+        "files": [
+            "autolabel.ado",
+            "autolabel.sthlp",
+            "_al_utils.ado"
+        ],
+        "description": "Automatic variable and value labeling from metadata",
+        "authors": "Jeffrey Clark, Jie Wen",
+        "requires": "registream"
+    },
+    "datamirror": {
+        "version": "1.0.0",
+        "release_date": "2026-04-22",
+        "source": "../../../datamirror/stata/src",
+        "files": [
+            "datamirror.ado",
+            "datamirror.sthlp",
+            "_dm_utils.ado",
+            "_dm_constraints.ado"
+        ],
+        "description": "Checkpoint-constrained synthetic data generation",
+        "authors": "Jeffrey Clark",
+        "requires": "registream"
+    }
+}

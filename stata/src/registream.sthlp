@@ -9,11 +9,13 @@
 {viewerjumpto "Examples" "registream##examples"}{...}
 {viewerjumpto "Privacy" "registream##privacy"}{...}
 {viewerjumpto "Authors" "registream##authors"}{...}
+{viewerjumpto "Citing RegiStream" "registream##citation"}{...}
+{viewerjumpto "Support" "registream##support"}{...}
 
 {title:Title}
 
 {p2colset 5 20 22 2}{...}
-{p2col :{cmd:registream} {hline 2}}Streamline Your Register Data Workflow{p_end}
+{p2col :{cmd:registream} {hline 2}}Infrastructure for Register Data Research{p_end}
 {p2colreset}{...}
 
 {marker syntax}{...}
@@ -32,11 +34,11 @@
 {p_end}
 
 {pstd}
-{ul:Updates & Maintenance}
+{ul:Updates}
 {p_end}
 
 {p 8 15 2}
-{cmd:registream update} [{cmd:package}|{cmd:dataset}]
+{cmd:registream update} [{cmd:package}]
 {p_end}
 
 {pstd}
@@ -44,7 +46,7 @@
 {p_end}
 
 {p 8 15 2}
-{cmd:registream stats}
+{cmd:registream stats} [{cmd:all}]
 {p_end}
 
 {pstd}
@@ -63,18 +65,36 @@
 {title:Description}
 
 {pstd}
-{cmd:RegiStream} is a comprehensive package for working with register data. It automates the application of variable and value labels from official sources like Statistics Sweden (SCB), manages metadata, and helps keep your workflow organized.
+{cmd:RegiStream} is an ecosystem for register data research.
+The {cmd:registream} command provides shared infrastructure (configuration
+management, update checking, usage tracking, and citation) used by all
+RegiStream modules.
 {p_end}
 
 {pstd}
-The {cmd:registream} command provides utilities for managing the package, checking versions, configuring settings, and viewing citation information.
+Data work is handled by individual modules:
+{p_end}
+
+{phang2}
+{hline 2} {help autolabel:autolabel}: apply variable and value labels from structured metadata{break}
+{hline 2} {help datamirror:datamirror}: coefficient-faithful synthetic data with SDC-safe extract
 {p_end}
 
 {marker modules}{...}
 {title:RegiStream modules}
 
 {pstd}
-{help autolabel:autolabel} - Automatically apply variable and value labels for register data
+{help autolabel:autolabel}: Automatically apply variable and value labels from
+structured metadata. Supports six Nordic domains (Statistics Sweden, Statistics
+Denmark, Statistics Norway, Försäkringskassan, Socialstyrelsen, Statistics
+Iceland) plus institutional metadata. See {help autolabel:help autolabel}.
+{p_end}
+
+{pstd}
+{help datamirror:datamirror}: Build coefficient-faithful synthetic data for
+replication outside secure environments. Extracts marginals, correlations, and
+regression checkpoints with automatic small-cell suppression. See
+{help datamirror:help datamirror}.
 {p_end}
 
 {marker setup}{...}
@@ -88,31 +108,39 @@ When you first run RegiStream or any of its modules, you'll be asked to choose a
 {bf:1) Offline Mode}
 {p_end}
 {pmore2}
-• No internet connections{break}
-• Manual metadata management{break}
-• Local usage logging only (stays on your machine)
+{hline 2} No internet connections{break}
+{hline 2} Manual metadata management{break}
+{hline 2} Local usage logging only (stays on your machine)
 {p_end}
 
 {phang2}
 {bf:2) Standard Mode} (recommended)
 {p_end}
 {pmore2}
-• Automatic metadata downloads{break}
-• Automatic update checks (daily){break}
-• Local usage logging only{break}
-• No online telemetry
+{hline 2} Automatic metadata downloads{break}
+{hline 2} Automatic update checks (daily){break}
+{hline 2} Local usage logging only{break}
+{hline 2} No online telemetry
 {p_end}
 
 {phang2}
 {bf:3) Full Mode} (Help improve RegiStream)
 {p_end}
 {pmore2}
-• Everything in Standard Mode, plus:{break}
-• Online telemetry: Sends anonymized usage data to help improve RegiStream
+{hline 2} Everything in Standard Mode, plus:{break}
+{hline 2} Online telemetry: sends anonymized usage data to help improve RegiStream
 {p_end}
 
 {pstd}
 You can change these settings at any time using {cmd:registream config}.
+{p_end}
+
+{pstd}
+{bf:Non-interactive sessions} (CI, scripts, batch mode): set the
+environment variable {cmd:REGISTREAM_AUTO_APPROVE=yes} to silently pick
+Full Mode; without it, the first-run wizard cannot prompt and the
+command fails. This matches the Python client; the R client defaults to
+a transient Offline-Mode config instead for CRAN-check safety.
 {p_end}
 
 {marker commands}{...}
@@ -133,10 +161,10 @@ Shows:
 {p_end}
 
 {pmore2}
-• Configuration directory location{break}
-• Current version{break}
-• All active settings (usage_logging, telemetry_enabled, internet_access, auto_update_check){break}
-• Citation information
+{hline 2} Configuration directory location{break}
+{hline 2} Current version{break}
+{hline 2} All active settings (usage_logging, telemetry_enabled, internet_access, auto_update_check){break}
+{hline 2} Citation information
 {p_end}
 
 {dlgtab:config}
@@ -160,23 +188,23 @@ See {help registream##config:Configuration section} below for all available sett
 {dlgtab:update}
 
 {pstd}
-Check for and install RegiStream package or metadata dataset updates.
+Check for and install RegiStream package updates.
 {p_end}
 
 {phang2}
-{cmd:. registream update} - Check/install package updates (default)
+{cmd:. registream update}: check and install package updates (default)
 {p_end}
 
 {phang2}
-{cmd:. registream update package} - Check/install package updates (same as above)
-{p_end}
-
-{phang2}
-{cmd:. registream update dataset} - Check/install metadata dataset updates
+{cmd:. registream update package}: same as above
 {p_end}
 
 {pstd}
-By default (no argument), checks for package updates and prompts to install if available.
+For metadata dataset updates, use {help autolabel:autolabel}:
+{p_end}
+
+{phang2}
+{cmd:. autolabel update datasets}
 {p_end}
 
 {dlgtab:stats}
@@ -189,8 +217,15 @@ View your local usage statistics.
 {cmd:. registream stats}
 {p_end}
 
+{phang2}
+{cmd:. registream stats all}
+{p_end}
+
 {pstd}
-Shows how many times you've used RegiStream and when.
+Shows how many times you've used RegiStream and when. With {cmd:all},
+aggregates across every anonymous user id found in the local usage log
+(useful on shared machines); without it, shows statistics for the
+current user only.
 {p_end}
 
 {dlgtab:version}
@@ -231,27 +266,46 @@ Shows the recommended citation format along with details about datasets used.
 {dlgtab:Available settings}
 
 {pstd}
-All settings accept {cmd:true} or {cmd:false}:
+The four privacy / connectivity flags accept {cmd:true} or {cmd:false};
+{cmd:dm_min_cell_size} takes a positive integer and
+{cmd:dm_quantile_trim} takes a non-negative real between 0 and 50.
 {p_end}
 
 {phang}
-{opt usage_logging(true|false)} - Local usage logging (default: true){break}
+{opt usage_logging(true|false)}: Local usage logging (default: true){break}
 Stores command history in {cmd:~/.registream/usage_stata.csv}
 {p_end}
 
 {phang}
-{opt telemetry_enabled(true|false)} - Online telemetry (default: false){break}
+{opt telemetry_enabled(true|false)}: Online telemetry (default: false){break}
 Sends anonymized usage data to registream.org
 {p_end}
 
 {phang}
-{opt internet_access(true|false)} - Internet features (default: true){break}
+{opt internet_access(true|false)}: Internet features (default: true){break}
 Allows automatic metadata downloads and update checks
 {p_end}
 
 {phang}
-{opt auto_update_check(true|false)} - Auto-update checks (default: true){break}
+{opt auto_update_check(true|false)}: Auto-update checks (default: true){break}
 Daily background check for package updates
+{p_end}
+
+{phang}
+{opt dm_min_cell_size(#)}: Datamirror privacy threshold (default: 50){break}
+Minimum cell size below which datamirror suppresses marginals and
+correlations in synthetic-data export. Must be a positive integer.
+{p_end}
+
+{phang}
+{opt dm_quantile_trim(#)}: Datamirror continuous-SDC threshold (default: 1){break}
+Percentile at which {cmd:q0} and {cmd:q100} in {cmd:marginals_cont.csv}
+are top- and bottom-coded. The default of 1 plateaus {cmd:q0} at the
+1st percentile and {cmd:q100} at the 99th, retiring the raw max/min
+columns that the Brandt-Franconi ESSnet guidelines classify as unsafe
+by default. Must be a non-negative real between 0 and 50. Setting to
+0 stores raw max/min and should only be used on data already top- and
+bottom-coded upstream.
 {p_end}
 
 {dlgtab:Mode presets}
@@ -291,9 +345,9 @@ By default, RegiStream stores files in:
 {p_end}
 
 {pmore2}
-• macOS: {cmd:/Users/username/.registream/}{break}
-• Linux: {cmd:/home/username/.registream/}{break}
-• Windows: {cmd:C:/Users/username/AppData/Local/registream/}
+{hline 2} macOS: {cmd:/Users/username/.registream/}{break}
+{hline 2} Linux: {cmd:/home/username/.registream/}{break}
+{hline 2} Windows: {cmd:C:/Users/username/AppData/Local/registream/}
 {p_end}
 
 {pstd}
@@ -317,18 +371,14 @@ To use a custom directory, set before first run:
 {cmd:. registream config, telemetry_enabled(false)} {it:(disable online telemetry)}
 {p_end}
 
-{phang2}
-{cmd:. registream info} {it:(verify changes)}
-{p_end}
-
 {dlgtab:Updates}
 
 {phang2}
-{cmd:. registream update} {it:(check/install package updates)}
+{cmd:. registream update} {it:(check and install package updates)}
 {p_end}
 
 {phang2}
-{cmd:. registream update dataset} {it:(update metadata datasets)}
+{cmd:. autolabel update datasets} {it:(update metadata; see {help autolabel})}
 {p_end}
 
 {dlgtab:Usage}
@@ -357,14 +407,14 @@ RegiStream has two separate tracking systems:
 {dlgtab:1. Local Usage Logging (NOT a GDPR issue)}
 
 {pstd}
-Stores data {bf:only on your machine} - never transmitted anywhere.
+Stores data {bf:only on your machine}; never transmitted anywhere.
 {p_end}
 
 {pmore2}
-• Stored in {cmd:~/.registream/usage_stata.csv}{break}
-• Like {cmd:.bash_history} for RegiStream commands{break}
-• Default: Enabled{break}
-• You control: View ({cmd:registream stats}), Delete (rm file), Disable ({cmd:registream config, usage_logging(false)})
+{hline 2} Stored in {cmd:~/.registream/usage_stata.csv}{break}
+{hline 2} Like {cmd:.bash_history} for RegiStream commands{break}
+{hline 2} Default: Enabled{break}
+{hline 2} You control: View ({cmd:registream stats}), Delete (rm file), Disable ({cmd:registream config, usage_logging(false)})
 {p_end}
 
 {dlgtab:2. Online Telemetry (GDPR compliant)}
@@ -374,12 +424,12 @@ Opt-in system that sends {bf:fully anonymous} data to registream.org.
 {p_end}
 
 {pmore2}
-• Default: Disabled (requires explicit consent){break}
-• Anonymous: One-way hash ID - cannot identify individuals{break}
-• What's sent: command, timestamp, version, OS (NOT your data or file paths){break}
-• Why: Helps improve RegiStream{break}
-• Enable: {cmd:registream config, telemetry_enabled(true)}{break}
-• Disable: {cmd:registream config, telemetry_enabled(false)}
+{hline 2} Default: Disabled (requires explicit consent){break}
+{hline 2} Anonymous: One-way hash ID, cannot identify individuals{break}
+{hline 2} What's sent: command, timestamp, version, OS (NOT your data or file paths){break}
+{hline 2} Why: Helps improve RegiStream{break}
+{hline 2} Enable: {cmd:registream config, telemetry_enabled(true)}{break}
+{hline 2} Disable: {cmd:registream config, telemetry_enabled(false)}
 {p_end}
 
 {pstd}
@@ -394,35 +444,35 @@ You have complete control over both systems:
 
 {pmore2}
 {bf:Configuration:}{break}
-• View all settings: {cmd:registream info}{break}
-• Change any setting: {cmd:registream config, option(value)}
+{hline 2} View all settings: {cmd:registream info}{break}
+{hline 2} Change any setting: {cmd:registream config, option(value)}
 {p_end}
 
 {pmore2}
 {bf:Local data:}{break}
-• View statistics: {cmd:registream stats}{break}
-• Access raw CSV: {cmd:~/.registream/usage_stata.csv}{break}
-• Disable: {cmd:registream config, usage_logging(false)}{break}
-• Delete: {cmd:rm ~/.registream/usage_stata.csv}
+{hline 2} View statistics: {cmd:registream stats}{break}
+{hline 2} Access raw CSV: {cmd:~/.registream/usage_stata.csv}{break}
+{hline 2} Disable: {cmd:registream config, usage_logging(false)}{break}
+{hline 2} Delete: {cmd:rm ~/.registream/usage_stata.csv}
 {p_end}
 
 {pmore2}
 {bf:Online telemetry:}{break}
-• Disable: {cmd:registream config, telemetry_enabled(false)}{break}
-• Request server deletion: Email support@registream.org with anonymous ID
+{hline 2} Disable: {cmd:registream config, telemetry_enabled(false)}{break}
+{hline 2} Request server deletion: Email support@registream.org with anonymous ID
 {p_end}
 
 {marker authors}{...}
 {title:Authors}
 
 {pstd}Jeffrey Clark{break}
-Stockholm University{break}
-Email: {browse "mailto:jeffrey.clark@su.se":jeffrey.clark@su.se}
+{{AFFILIATION_JEFFREY}}{break}
+Email: {browse "mailto:{{EMAIL_JEFFREY}}":{{EMAIL_JEFFREY}}}
 {p_end}
 
 {pstd}Jie Wen{break}
-Swedish House of Finance{break}
-Email: {browse "mailto:jie.wen@hhs.se":jie.wen@hhs.se}
+{{AFFILIATION_JIE}}{break}
+Email: {browse "mailto:{{EMAIL_JIE}}":{{EMAIL_JIE}}}
 {p_end}
 
 {marker citation}{...}
@@ -433,7 +483,7 @@ To cite the {cmd:RegiStream} package in publications:
 {p_end}
 
 {pstd}
-Clark, J. & Wen, J. (2024–). {it:RegiStream: Streamline Your Register Data Workflow} (Version {{VERSION}}). Available at: {browse "https://registream.org"}.
+{{CITATION_REGISTREAM_STHLP_APA_VERSIONED}}
 {p_end}
 
 {pstd}
@@ -444,7 +494,7 @@ For dataset-specific citations, use {cmd:registream cite} to see recommended for
 {title:Support}
 
 {pstd}
-• Documentation: {browse "https://registream.org/docs"}{break}
-• Issues & feedback: {browse "https://github.com/registream/registream/issues"}{break}
-• Website: {browse "https://registream.org"}
+{hline 2} Documentation: {browse "https://registream.org/docs"}{break}
+{hline 2} Support & FAQ: {browse "https://registream.org"}{break}
+{hline 2} Contact: {browse "mailto:support@registream.org":support@registream.org}
 {p_end}

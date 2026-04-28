@@ -1,12 +1,6 @@
-cap program drop _rs_config
-cap program drop _config_path
-cap program drop _config_init
-cap program drop _config_get
-cap program drop _config_set
-
 program define _rs_config, rclass
 	version 16.0
-	* YAML config file management for RegiStream
+	* CSV config file management for RegiStream
 
 	gettoken subcmd 0 : 0
 
@@ -36,16 +30,16 @@ end
 program define _config_path, rclass
 	args dir
 
-	local config_file "`dir'/config_stata.yaml"
+	local config_file "`dir'/config_stata.csv"
 	return clear
 	return local config_file "`config_file'"
 end
 
-* Initialize config_stata.yaml if it doesn't exist
+* Initialize config_stata.csv if it doesn't exist
 program define _config_init, rclass
 	args dir
 
-	local config_file "`dir'/config_stata.yaml"
+	local config_file "`dir'/config_stata.csv"
 
 	* Check if config already exists and has valid content
 	if (fileexists("`config_file'")) {
@@ -88,45 +82,26 @@ program define _config_init, rclass
 	local telemetry_enabled "true"
 	local internet_access "true"
 	local auto_update_check "true"
+	local dm_min_cell_size "50"
+	local dm_quantile_trim "1"
 
 	* Check if auto-approve is enabled (for automated testing)
 	if ("$REGISTREAM_AUTO_APPROVE" != "yes") {
 		* Show first-run setup prompt
 		di as result ""
-		di as result "{hline 60}"
-		di as result "RegiStream - First-Time Setup"
-		di as result "{hline 60}"
+		di as result "  {hline 78}"
+		di as result "  Welcome to RegiStream"
+		di as result "  {hline 78}"
 		di as text ""
-		di as text "Welcome to RegiStream! Before we begin, please choose your setup mode."
+		di as text "  Config will be saved to: {result:`dir'}"
 		di as text ""
-		di as text "Configuration directory: {result:`dir'}"
+		di as result "  Choose a mode:"
 		di as text ""
-		di as text "To use a custom directory, set before running:"
-		di as text "  . global registream_dir " _char(34) "/your/custom/path" _char(34)
+		di as text "    1) {bf:Offline}: no internet. You manage metadata manually."
+		di as text "    2) {bf:Standard}: auto-download metadata and updates. {it:Recommended.}"
+		di as text "    3) {bf:Full}: Standard + share anonymous usage data to help improve RegiStream."
 		di as text ""
-		di as result "Setup Options:"
-		di as text ""
-		di as text "  1) {bf:Offline Mode}"
-		di as text "     • No internet connections"
-		di as text "     • Manual metadata management"
-		di as text "     • Local usage logging only (stays on your machine)"
-		di as text ""
-		di as text "  2) {bf:Standard Mode}"
-		di as text "     • Automatic metadata downloads from registream.org"
-		di as text "     • Automatic update checks (daily)"
-		di as text "     • Local usage logging only (stays on your machine)"
-		di as text "     • No online telemetry"
-		di as text ""
-		di as text "  3) {bf:Full Mode (Help Improve RegiStream)}"
-		di as text "     • Everything in Standard Mode, plus:"
-		di as text "     • Online telemetry: Sends anonymized usage data to help improve"
-		di as text "       RegiStream (commands run, version, OS - including variable"
-		di as text "       names from commands but no dataset content)"
-		di as text ""
-		di as text "Note: You can change these settings later using:"
-		di as text "  . registream config"
-		di as text ""
-		di as result "{hline 60}"
+		di as text "  You can change this anytime with {bf:registream config}."
 		di as text ""
 
 		* Get user choice (3 options)
@@ -134,59 +109,44 @@ program define _config_init, rclass
 		local choice = r(choice)
 
 		if ("`choice'" == "1") {
-			* Offline mode
 			local usage_logging "true"
 			local telemetry_enabled "false"
 			local internet_access "false"
 			local auto_update_check "false"
-
 			di as text ""
-			di as result "Offline Mode selected."
-			di as text "All internet features disabled. Local usage logging enabled."
-			di as text "You can enable internet features later with:"
-			di as text "  . registream config, internet_access(true)"
+			di as result "  ✓ Offline Mode"
+			di as text "    Enable internet later with: {bf:registream config, internet_access(true)}"
 			di as text ""
 		}
 		else if ("`choice'" == "2") {
-			* Standard mode
 			local usage_logging "true"
 			local telemetry_enabled "false"
 			local internet_access "true"
 			local auto_update_check "true"
-
 			di as text ""
-			di as result "Standard Mode selected."
-			di as text "Internet features enabled. Online telemetry disabled."
-			di as text "You can enable online telemetry later with:"
-			di as text "  . registream config, telemetry_enabled(true)"
+			di as result "  ✓ Standard Mode"
 			di as text ""
 		}
 		else {
-			* Full mode (choice 3)
 			local usage_logging "true"
 			local telemetry_enabled "true"
 			local internet_access "true"
 			local auto_update_check "true"
-
 			di as text ""
-			di as result "Full Mode selected."
-			di as text "All features enabled including online telemetry."
-			di as text "Thank you for helping improve RegiStream!"
-			di as text "You can disable online telemetry later with:"
-			di as text "  . registream config, telemetry_enabled(false)"
+			di as result "  ✓ Full Mode: thanks for helping improve RegiStream"
+			di as text "    Opt out anytime with: {bf:registream config, telemetry_enabled(false)}"
 			di as text ""
 		}
 	}
 	* else: AUTO_APPROVE mode (testing) - uses Full Mode (option 3) defaults
-	* (internet enabled, online telemetry enabled, for testing usage tracking endpoint)
 
 	* ═══════════════════════════════════════════════════════════════════════
-	* Create config_stata.yaml with user's choices
+	* Create config_stata.csv with user's choices
 	* ═══════════════════════════════════════════════════════════════════════
 
-	* Try to write initial config_stata.yaml
+	* Try to write initial config_stata.csv
 	cap file close configfile
-	cap file open configfile using "`config_file'", write replace
+	qui cap file open configfile using "`config_file'", write replace
 	if (_rc != 0) {
 		* Can't write config (read-only system)
 		return clear
@@ -195,22 +155,20 @@ program define _config_init, rclass
 		exit 0
 	}
 
-	file write configfile "# RegiStream Configuration" _n
-	file write configfile "" _n
-
-	* Settings (based on user choice)
-	file write configfile "# Settings" _n
-	file write configfile "usage_logging: `usage_logging'" _n
-	file write configfile "telemetry_enabled: `telemetry_enabled'" _n
-	file write configfile "internet_access: `internet_access'" _n
-	file write configfile "auto_update_check: `auto_update_check'" _n
-	file write configfile "" _n
-
-	* Update tracking
-	file write configfile "# Update tracking" _n
-	file write configfile `"last_update_check: """' _n
-	file write configfile "update_available: false" _n
-	file write configfile `"latest_version: """' _n
+	file write configfile "key;value" _n
+	file write configfile "usage_logging;`usage_logging'" _n
+	file write configfile "telemetry_enabled;`telemetry_enabled'" _n
+	file write configfile "internet_access;`internet_access'" _n
+	file write configfile "auto_update_check;`auto_update_check'" _n
+	file write configfile "dm_min_cell_size;`dm_min_cell_size'" _n
+	file write configfile "dm_quantile_trim;`dm_quantile_trim'" _n
+	file write configfile "last_update_check;" _n
+	file write configfile "update_available;false" _n
+	file write configfile "latest_version;" _n
+	file write configfile "autolabel_update_available;false" _n
+	file write configfile "autolabel_latest_version;" _n
+	file write configfile "datamirror_update_available;false" _n
+	file write configfile "datamirror_latest_version;" _n
 
 	cap file close configfile
 
@@ -223,7 +181,7 @@ end
 program define _config_get, rclass
 	args dir key
 
-	local config_file "`dir'/config_stata.yaml"
+	local config_file "`dir'/config_stata.csv"
 
 	* Check if config exists
 	if (!fileexists("`config_file'")) {
@@ -243,16 +201,15 @@ program define _config_get, rclass
 	file read `fh' line
 	local eof_status = r(eof)
 	while `eof_status' == 0 {
-		* Check if line contains our key
-		if (strpos("`line'", "`key':") > 0) {
-			* Extract everything after "key:" using subinstr
-			local rawvalue : subinstr local line "`key':" "", all
-			* Remove ALL spaces (not just one)
-			local rawvalue : subinstr local rawvalue " " "", all
-			* Remove all quotes
-			local rawvalue : subinstr local rawvalue `"""' "", all
-			local value "`rawvalue'"
-			local found 1
+		* Parse CSV: key;value
+		local sep_pos = strpos(`"`line'"', ";")
+		if (`sep_pos' > 0) {
+			local line_key = substr(`"`line'"', 1, `sep_pos' - 1)
+			local line_val = substr(`"`line'"', `sep_pos' + 1, .)
+			if ("`line_key'" == "`key'") {
+				local value "`line_val'"
+				local found 1
+			}
 		}
 
 		file read `fh' line
@@ -266,12 +223,12 @@ program define _config_get, rclass
 	return scalar found = `found'
 end
 
-* Set a value in config (simple key-value, not nested)
+* Set a value in config (simple key-value)
 * Non-fatal if config is read-only
 program define _config_set, rclass
 	args dir key value
 
-	local config_file "`dir'/config_stata.yaml"
+	local config_file "`dir'/config_stata.csv"
 
 	* Check if config exists
 	if (!fileexists("`config_file'")) {
@@ -306,12 +263,14 @@ program define _config_set, rclass
 		local ++lines
 		local content`lines' `"`line'"'
 
-		* Check if this line contains our key
-		local trimmed = trim(`"`line'"')
-		if (regexm("`trimmed'", "^`key':")) {
-			* Replace the value (no indentation - same level as original)
-			local content`lines' `"`key': `value'"'
-			local found = 1
+		* Parse CSV: check if this line's key matches
+		local sep_pos = strpos(`"`line'"', ";")
+		if (`sep_pos' > 0) {
+			local line_key = substr(`"`line'"', 1, `sep_pos' - 1)
+			if ("`line_key'" == "`key'") {
+				local content`lines' "`key';`value'"
+				local found = 1
+			}
 		}
 
 		file read `fh' line
@@ -321,7 +280,7 @@ program define _config_set, rclass
 	file close `fh'
 
 	* Try to write back to file
-	cap file open `fh' using "`config_file'", write replace
+	qui cap file open `fh' using "`config_file'", write replace
 	if (_rc != 0) {
 		* Can't write (read-only system)
 		return clear

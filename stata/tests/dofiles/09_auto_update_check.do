@@ -1,38 +1,22 @@
 /*==============================================================================
-  RegiStream - Auto Update Check Test
-
-  Purpose: Test automatic background update checking
+  Test 09: Auto Update Check
+  Tests: config structure, info shows setting, config command,
+         background check, notification, 24h caching
   Author: Jeffrey Clark
-  Date: October 2025
-
-  Test Flow:
-  1. Verify auto_update_check is in config (default: true)
-  2. Test background check respects 24h cache
-  3. Test notification display
-  4. Test disabling auto_update_check
-  5. Test config command for auto_update_check
-
-  Usage:
-    From repo root: do stata/tests/dofiles/09_auto_update_check.do
 ==============================================================================*/
 
 clear all
 version 16.0
 
-*==============================================================================
-* Find project root using .project_root marker file
-*==============================================================================
-
+* Find project root
 local cwd = "`c(pwd)'"
 local project_root ""
-
 forvalues i = 0/5 {
 	local search_path = "`cwd'"
 	forvalues j = 1/`i' {
 		local search_path = "`search_path'/.."
 	}
-
-	capture confirm file "`search_path'/.project_root"
+	capture confirm file "`search_path'/.project-root"
 	if _rc == 0 {
 		quietly cd "`search_path'"
 		local project_root = "`c(pwd)'"
@@ -40,225 +24,193 @@ forvalues i = 0/5 {
 		continue, break
 	}
 }
-
 if "`project_root'" == "" {
-	di as error "ERROR: Could not find .project_root file"
+	di as error "ERROR: Could not find .project-root file"
 	exit 601
 }
-
-*==============================================================================
-* Set up paths and config
-*==============================================================================
 
 global PROJECT_ROOT "`project_root'"
 global TEST_DIR "$PROJECT_ROOT/stata/tests"
 global SRC_DIR "$PROJECT_ROOT/stata/src"
 global TEST_LOGS_DIR "$TEST_DIR/logs"
-
-* Create logs directory
 cap mkdir "$TEST_LOGS_DIR"
-
-* Enable auto-approve for test mode (bypasses user prompts)
-global REGISTREAM_AUTO_APPROVE "yes"
-
-* Clear all cached programs and load fresh
 discard
 adopath ++ "$SRC_DIR"
 do "$SRC_DIR/_rs_utils.ado"
-cap do "$SRC_DIR/_rs_dev_utils.ado"
-
-* Get registream directory
-_rs_utils get_dir
-local registream_dir "`r(dir)'"
+cap do "$SRC_DIR/../dev/host_override.do"
+do "$SRC_DIR/../dev/auto_approve.do"
 
 *==============================================================================
-* Start logging
+* Setup: Isolated temp directory
 *==============================================================================
 
-capture log close
-log using "$TEST_LOGS_DIR/09_auto_update_check.log", replace text
+tempfile tmpbase
+local test_dir = "`tmpbase'_auto_update"
+cap mkdir "`test_dir'"
+global registream_dir "`test_dir'"
 
 di as result ""
 di as result "============================================================"
-di as result "TEST: Auto Update Check"
+di as result "Test 09: Auto Update Check"
 di as result "============================================================"
 di as result ""
 
-* =============================================================================
-* TEST 1: Config includes auto_update_check
-* =============================================================================
-di as result "------------------------------------------------------------"
-di as result "TEST 1: Config Structure"
-di as result "------------------------------------------------------------"
-di as text ""
+local tests_passed = 0
+local tests_total = 6
 
-* Reinitialize config to ensure fresh state
-cap erase "`registream_dir'/config.yaml"
-_rs_config init "`registream_dir'"
+*==============================================================================
+* Test 1: Config structure includes auto_update_check field
+*==============================================================================
 
-di as text "Config contents:"
-type "`registream_dir'/config.yaml"
-di as text ""
+di as text "Test 1/6: Config has auto_update_check field"
 
-* Check for auto_update_check field
-_rs_config get "`registream_dir'" "auto_update_check"
-local found = r(found)
-local value = r(value)
+* Initialize config
+_rs_config init "`test_dir'"
 
-if (`found' == 1 & "`value'" == "true") {
-	di as result "✓ PASS: auto_update_check present and enabled by default"
-}
-else {
-	di as error "✗ FAIL: auto_update_check not found or wrong value"
-}
-
-* Check for update_available field
-_rs_config get "`registream_dir'" "update_available"
+_rs_config get "`test_dir'" "auto_update_check"
 if (r(found) == 1) {
-	di as result "✓ PASS: update_available field present (value: `r(value)')"
+	di as result "  [PASS] auto_update_check field exists in config (value: `r(value)')"
+	local ++tests_passed
 }
 else {
-	di as error "✗ FAIL: update_available not found"
+	di as error "  [FAIL] auto_update_check field not found in config"
 }
 
-* Check for latest_version field
-_rs_config get "`registream_dir'" "latest_version"
-if (r(found) == 1) {
-	di as result "✓ PASS: latest_version field present"
-}
-else {
-	di as error "✗ FAIL: latest_version not found"
-}
+*==============================================================================
+* Test 2: registream info shows auto_update_check setting
+*==============================================================================
 
-di as result ""
+di as text "Test 2/6: registream info shows auto_update_check"
 
-* =============================================================================
-* TEST 2: registream info shows auto_update_check
-* =============================================================================
-di as result "------------------------------------------------------------"
-di as result "TEST 2: Info Command Shows Setting"
-di as result "------------------------------------------------------------"
-di as text ""
-
-registream info
-
-di as text "Expected: auto_update_check shown in Settings section"
-di as result "✓ PASS: Info command displays auto_update_check"
-di as result ""
-
-* =============================================================================
-* TEST 3: Config command can modify auto_update_check
-* =============================================================================
-di as result "------------------------------------------------------------"
-di as result "TEST 3: Config Command"
-di as result "------------------------------------------------------------"
-di as text ""
-
-* Disable auto_update_check
-_rs_config set "`registream_dir'" "auto_update_check" "false"
-
-_rs_config get "`registream_dir'" "auto_update_check"
-local new_value = r(value)
-
-if ("`new_value'" == "false") {
-	di as result "✓ PASS: auto_update_check disabled successfully"
+* Run info and capture output (it should not error)
+cap noi registream info
+if (_rc == 0) {
+	di as result "  [PASS] registream info displays auto_update_check setting"
+	local ++tests_passed
 }
 else {
-	di as error "✗ FAIL: auto_update_check not disabled"
+	di as error "  [FAIL] registream info failed (rc=`=_rc')"
 }
 
-* Re-enable for remaining tests
-_rs_config set "`registream_dir'" "auto_update_check" "true"
+*==============================================================================
+* Test 3: Config command can toggle auto_update_check
+*==============================================================================
+
+di as text "Test 3/6: registream config can toggle auto_update_check"
+
+* Set to false
+cap noi registream config, auto_update_check(false)
+_rs_config get "`test_dir'" "auto_update_check"
+local val1 "`r(value)'"
+
+* Set back to true
+cap noi registream config, auto_update_check(true)
+_rs_config get "`test_dir'" "auto_update_check"
+local val2 "`r(value)'"
+
+if ("`val1'" == "false" & "`val2'" == "true") {
+	di as result "  [PASS] auto_update_check toggles correctly (false -> true)"
+	local ++tests_passed
+}
+else {
+	di as error "  [FAIL] Toggle failed: after false=`val1', after true=`val2'"
+}
+
+*==============================================================================
+* Test 4: Background check respects auto_update_check=false
+*==============================================================================
+
+di as text "Test 4/6: Background check respects disabled setting"
+
+* Disable auto update
+_rs_config set "`test_dir'" "auto_update_check" "false"
+
+* Disable telemetry so send_heartbeat exits after cache read
+_rs_config set "`test_dir'" "telemetry_enabled" "false"
+
+* Clear cached update state from earlier tests (Test 2 heartbeat may have set this)
+_rs_config set "`test_dir'" "update_available" "false"
+_rs_config set "`test_dir'" "latest_version" ""
+
+* Run heartbeat - should respect disabled setting. send_heartbeat is now
+* rclass; reading r(update_available) should come back 0 when the feature
+* is disabled.
+_rs_utils get_version
+local ver "`r(version)'"
+cap noi _rs_updates send_heartbeat "`test_dir'" "`ver'" "test" "" "" "" ""
+
+* Should not report an update when disabled
+if ("`r(update_available)'" == "0" | "`r(update_available)'" == "") {
+	di as result "  [PASS] Background check skipped when auto_update_check=false"
+	local ++tests_passed
+}
+else {
+	di as error "  [FAIL] Background check ran despite auto_update_check=false"
+}
+
+* Re-enable
+_rs_config set "`test_dir'" "auto_update_check" "true"
+
+*==============================================================================
+* Test 5: Notification display mechanism
+*==============================================================================
+
+di as text "Test 5/6: Update notification display"
+
+* show_notification now takes args, not globals.
+cap noi _rs_updates show_notification , ///
+	current_version("`ver'") scope(core) ///
+	core_update(1) core_latest("99.0.0") ///
+	autolabel_update(0) autolabel_latest("") ///
+	datamirror_update(0) datamirror_latest("")
+if (_rc == 0) {
+	di as result "  [PASS] show_notification ran without error"
+	local ++tests_passed
+}
+else {
+	di as error "  [FAIL] show_notification errored (rc=`=_rc')"
+}
+
+*==============================================================================
+* Test 6: 24-hour caching (last_update_check timestamp)
+*==============================================================================
+
+di as text "Test 6/6: 24-hour cache via last_update_check timestamp"
+
+* Set last_update_check to current time (should be fresh, no re-check)
+local current_clock = clock("`c(current_date)' `c(current_time)'", "DMY hms")
+_rs_config set "`test_dir'" "last_update_check" "`current_clock'"
+
+* Read it back to verify it persisted
+_rs_config get "`test_dir'" "last_update_check"
+local stored_check "`r(value)'"
+
+if ("`stored_check'" != "" & "`stored_check'" != ".") {
+	di as result "  [PASS] last_update_check timestamp stored: `stored_check'"
+	local ++tests_passed
+}
+else {
+	di as error "  [FAIL] last_update_check not stored properly"
+}
+
+*==============================================================================
+* Cleanup
+*==============================================================================
+
+cap erase "`test_dir'/config_stata.csv"
+cap _rs_utils del_folder_rec "`test_dir'"
+global registream_dir ""
+
+*==============================================================================
+* Summary
+*==============================================================================
 
 di as result ""
-
-* =============================================================================
-* TEST 4: Background check respects settings
-* =============================================================================
-di as result "------------------------------------------------------------"
-di as result "TEST 4: Background Check Function"
-di as result "------------------------------------------------------------"
-di as text ""
-
-* Clear globals
-global REGISTREAM_UPDATE_AVAILABLE = 0
-global REGISTREAM_LATEST_VERSION ""
-
-* Run background check (silent)
-cap qui _rs_updates check_background "`registream_dir'" "2.0.0"
-
-di as text "Background check completed (silent operation)"
-di as text "Globals set:"
-di as text "  UPDATE_AVAILABLE: $REGISTREAM_UPDATE_AVAILABLE"
-di as text "  LATEST_VERSION:   $REGISTREAM_LATEST_VERSION"
-di as result "✓ PASS: Background check executed"
+di as result "============================================================"
+di as result "Test 09 Summary: `tests_passed'/`tests_total' tests passed"
+di as result "============================================================"
 di as result ""
 
-* =============================================================================
-* TEST 5: Notification wrapper function
-* =============================================================================
-di as result "------------------------------------------------------------"
-di as result "TEST 5: Notification Display"
-di as result "------------------------------------------------------------"
-di as text ""
-
-* Test notification display (will show if update available)
-di as text "Testing notification wrapper:"
-_rs_updates show_notification "2.0.0"
-
-di as text "Expected: Notification shown only if update available"
-di as result "✓ PASS: Notification wrapper works"
-di as result ""
-
-* =============================================================================
-* TEST 6: 24-hour caching behavior
-* =============================================================================
-di as result "------------------------------------------------------------"
-di as result "TEST 6: 24-Hour Caching"
-di as result "------------------------------------------------------------"
-di as text ""
-
-* Set last_update_check to current time
-local check_date "`c(current_date)'"
-local check_time "`c(current_time)'"
-_rs_config set "`registream_dir'" "last_update_check" "`check_date'T`check_time'Z"
-
-di as text "Set last_update_check to current time"
-
-* Run background check again (should skip)
-global REGISTREAM_UPDATE_AVAILABLE = 0
-cap qui _rs_updates check_background "`registream_dir'" "2.0.0"
-
-di as text "Expected: Check skipped (within 24h window)"
-di as result "✓ PASS: Caching logic works"
-di as result ""
-
-* =============================================================================
-* SUMMARY
-* =============================================================================
-di as result "============================================================"
-di as result "SUMMARY: Auto Update Check"
-di as result "============================================================"
-di as text ""
-
-di as result "✓ Config includes auto_update_check (default: true)"
-di as result "✓ Info command shows auto_update_check setting"
-di as result "✓ Config command can modify auto_update_check"
-di as result "✓ Background check runs silently and sets globals"
-di as result "✓ Notification wrapper displays update message"
-di as result "✓ 24-hour caching prevents excessive API calls"
-
-di as text ""
-di as text "Feature Behavior:"
-di as text "  - Checks for updates once per 24 hours"
-di as text "  - Runs silently before autolabel commands"
-di as text "  - Shows notification after command completion"
-di as text "  - Non-intrusive (doesn't block execution)"
-di as text "  - Can be disabled: registream config, auto_update_check(false)"
-
-di as text ""
-di as result "============================================================"
-di as result "ALL TESTS PASSED"
-di as result "============================================================"
-
-log close
+if (`tests_passed' < `tests_total') {
+	exit 1
+}

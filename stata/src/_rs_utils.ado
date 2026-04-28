@@ -4,7 +4,6 @@
 * Usage: _rs_utils subcommand [args]
 * =============================================================================
 
-cap program drop _rs_utils
 program define _rs_utils, rclass
 	version 16.0
 
@@ -25,8 +24,15 @@ program define _rs_utils, rclass
 	else if ("`subcmd'" == "del_folder_rec") {
 		_utils_del_folder_rec `0'
 	}
+	else if ("`subcmd'" == "mkdir_p") {
+		_utils_mkdir_p `0'
+	}
 	else if ("`subcmd'" == "get_api_host") {
 		_utils_get_api_host `0'
+		return add
+	}
+	else if ("`subcmd'" == "get_install_url") {
+		_utils_get_install_url `0'
 		return add
 	}
 	else if ("`subcmd'" == "prompt") {
@@ -45,6 +51,14 @@ program define _rs_utils, rclass
 		_utils_get_filesize `0'
 		return add
 	}
+	else if ("`subcmd'" == "detect_installed_modules") {
+		_utils_detect_modules `0'
+		return add
+	}
+	else if ("`subcmd'" == "detect_installed_trk_packages") {
+		_utils_detect_trk_packages `0'
+		return add
+	}
 	else {
 		di as error "Invalid _rs_utils subcommand: `subcmd'"
 		exit 198
@@ -55,7 +69,6 @@ end
 * get_dir: Get RegiStream directory path
 * Returns r(dir) with the registream directory path
 * -----------------------------------------------------------------------------
-cap program drop _utils_get_dir
 program define _utils_get_dir, rclass
 	* Check if we have $registream_dir override
 	if "$registream_dir" != "" {
@@ -94,7 +107,6 @@ end
 * confirmdir: Check if a directory exists
 * Returns r(exists) = 1 if directory exists, 0 otherwise
 * -----------------------------------------------------------------------------
-cap program drop _utils_confirmdir
 program define _utils_confirmdir, rclass
 	syntax anything(name=arguments)
 
@@ -129,7 +141,6 @@ end
 * escape_ascii: Escape special characters in strings
 * Returns r(escaped_string) with escaped string
 * -----------------------------------------------------------------------------
-cap program drop _utils_escape_ascii
 program define _utils_escape_ascii, rclass
 	args input_string
 
@@ -152,9 +163,56 @@ program define _utils_escape_ascii, rclass
 end
 
 * -----------------------------------------------------------------------------
+* mkdir_p: Recursive mkdir (native, no shell).
+* Creates `path' and any missing parent directories. Idempotent: returns 0
+* when the directory already exists or is newly created; non-zero on genuine
+* failure (invalid path, permissions).
+*
+* Why native: `shell mkdir -p` flashes a cmd window on Windows and breaks
+* silent-batch assumptions. Stata's native `mkdir` is single-level, so we
+* recurse: on rc=602 (parent missing), find the deepest separator, recurse
+* on the parent, then retry. Handles both / and \\ separators (Windows
+* accepts either). Used by modules (datamirror's checkpoint_dir, any
+* package with arbitrary-depth paths); autolabel's cache is shallow and
+* uses single-level mkdirs in place.
+*
+* Usage: _rs_utils mkdir_p "path/to/nested/dir"
+* -----------------------------------------------------------------------------
+program _utils_mkdir_p
+	args path
+
+	cap mkdir "`path'"
+	if _rc == 0 | _rc == 693 exit 0
+
+	if _rc == 602 {
+		local last_fwd = strpos(reverse("`path'"), "/")
+		local last_bwd = strpos(reverse("`path'"), "\")
+		if `last_fwd' == 0 & `last_bwd' == 0 exit 602
+
+		if `last_fwd' == 0 {
+			local last_sep = `last_bwd'
+		}
+		else if `last_bwd' == 0 {
+			local last_sep = `last_fwd'
+		}
+		else {
+			local last_sep = min(`last_fwd', `last_bwd')
+		}
+
+		local parent = substr("`path'", 1, length("`path'") - `last_sep')
+		if "`parent'" == "" exit 602
+
+		_rs_utils mkdir_p "`parent'"
+		cap mkdir "`path'"
+		exit _rc
+	}
+
+	exit _rc
+end
+
+* -----------------------------------------------------------------------------
 * del_folder_rec: Recursively delete a folder and its contents
 * -----------------------------------------------------------------------------
-cap program drop _utils_del_folder_rec
 program _utils_del_folder_rec
 	args folder
 
@@ -183,15 +241,13 @@ end
 * Returns r(host) with the API host URL
 * -----------------------------------------------------------------------------
 * Priority (highest to lowest):
-*   1. Dev mode: _rs_dev_utils get_host (defined in _rs_dev_utils.ado)
+*   1. Dev mode: _rs_dev_utils get_host (defined in stata/dev/host_override.do)
 *   2. Production: https://registream.org (hardcoded)
 * -----------------------------------------------------------------------------
-cap program drop _utils_get_api_host
 program define _utils_get_api_host, rclass
-	* Try dev override (only exists if _rs_dev_utils.ado is in adopath)
+	* Try dev override (only defined if stata/dev/host_override.do was sourced)
 	cap qui _rs_dev_utils get_host
 	if (_rc == 0) {
-		* Dev override exists - return its value
 		return local host "`r(host)'"
 	}
 	else {
@@ -201,29 +257,32 @@ program define _utils_get_api_host, rclass
 end
 
 * -----------------------------------------------------------------------------
-* prompt: Display interactive user prompt
-* Returns r(response) = "yes" or "no" (or choice number for multi-choice)
+* get_install_url: Get the canonical net install URL (with dev override support)
+* Returns r(url): single source of truth for `net install ... from(...)`
 *
-* Auto-loads developer config (_rs_dev_config.ado) which can override this
-* function for batch mode testing/development workflows.
+* Examples:
+*   production : https://registream.org/install/stata/latest
+*   dev override: http://localhost:5000/install/stata/latest
+* -----------------------------------------------------------------------------
+program define _utils_get_install_url, rclass
+	_utils_get_api_host
+	return local url "`r(host)'/install/stata/latest"
+end
+
+* -----------------------------------------------------------------------------
+* prompt: Display interactive user prompt
+* Returns r(response) = "yes"
+*
+* Honors $REGISTREAM_AUTO_APPROVE="yes" for batch mode (set via
+* stata/dev/auto_approve.do in tests; parallel to the REGISTREAM_AUTO_APPROVE
+* env var in the Python client).
 *
 * Usage:
 *   _rs_utils prompt "Download dataset from API?"
 *   local response = r(response)
 * -----------------------------------------------------------------------------
-cap program drop _utils_prompt
 program define _utils_prompt, rclass
 	args prompt_message
-
-	* Auto-load dev config if it exists (only once per session)
-	if ("$_RS_DEV_CONFIG_LOADED" != "yes") {
-		local dev_file "stata/src/_rs_dev_config.ado"
-		cap confirm file "`dev_file'"
-		if (_rc == 0) {
-			qui do "`dev_file'"
-			global _RS_DEV_CONFIG_LOADED "yes"
-		}
-	}
 
 	* Check if auto-approve is enabled (dev mode or test mode)
 	if ("$REGISTREAM_AUTO_APPROVE" == "yes") {
@@ -235,7 +294,7 @@ program define _utils_prompt, rclass
 	* Display prompt and wait for user input
 	di as text ""
 	di as result "`prompt_message'"
-	di as text "Type 'yes' or 'no': " _request(user_response)
+	di as text "  Type 'yes' or 'no': " _request(user_response)
 
 	* Normalize response (trim whitespace and convert to lowercase)
 	local response = lower(trim("$user_response"))
@@ -275,8 +334,8 @@ end
 * prompt_choice: Display numbered choice prompt
 * Returns r(choice) = choice number (1, 2, 3, etc.)
 *
-* Auto-loads developer config which can override for batch mode (returns "1")
-* Automatically appends "Abort" as the last option (exits with error if selected)
+* In batch mode ($REGISTREAM_AUTO_APPROVE="yes") auto-returns choice "1".
+* Automatically appends "Abort" as the last option (exits with error if selected).
 *
 * Usage:
 *   _rs_utils prompt_choice "What to do?" "Continue" "Re-download"
@@ -287,20 +346,9 @@ end
 *   [2] Re-download
 *   [3] Abort
 * -----------------------------------------------------------------------------
-cap program drop _utils_prompt_choice
 program define _utils_prompt_choice, rclass
 	* First argument is the message, rest are choices
 	gettoken message 0 : 0
-
-	* Auto-load dev config if it exists (only once per session)
-	if ("$_RS_DEV_CONFIG_LOADED" != "yes") {
-		local dev_file "stata/src/_rs_dev_config.ado"
-		cap confirm file "`dev_file'"
-		if (_rc == 0) {
-			qui do "`dev_file'"
-			global _RS_DEV_CONFIG_LOADED "yes"
-		}
-	}
 
 	* Check if auto-approve is enabled (dev mode or test mode)
 	if ("$REGISTREAM_AUTO_APPROVE" == "yes") {
@@ -324,13 +372,13 @@ program define _utils_prompt_choice, rclass
 
 	* Display prompt
 	di as text ""
-	di as result "`message'"
+	di as result "  `message'"
 	di as text ""
 	forvalues i = 1/`num_choices' {
-		di as text "  [`i'] `choice_`i''"
+		di as text "    [`i'] `choice_`i''"
 	}
 	di as text ""
-	di as text "Enter choice (1-`num_choices'): " _request(user_choice)
+	di as text "  Enter choice (1-`num_choices'): " _request(user_choice)
 
 	* Validate choice
 	local choice = lower(trim("$user_choice"))
@@ -350,7 +398,7 @@ program define _utils_prompt_choice, rclass
 		di as text ""
 
 		* Rebuild argument list and retry (exclude abort option)
-		local args `"`message'"'
+		local args `""`message'""'
 		local original_choices = `num_choices' - 1
 		forvalues i = 1/`original_choices' {
 			local args `"`args' "`choice_`i''""'
@@ -366,7 +414,7 @@ program define _utils_prompt_choice, rclass
 		di as text ""
 
 		* Rebuild argument list and retry (exclude abort option)
-		local args `"`message'"'
+		local args `""`message'""'
 		local original_choices = `num_choices' - 1
 		forvalues i = 1/`original_choices' {
 			local args `"`args' "`choice_`i''""'
@@ -394,12 +442,11 @@ end
 * This helper function returns the current version of RegiStream.
 *
 * Priority (highest to lowest):
-*   1. Dev mode: _rs_dev_utils get_version (defined in _rs_dev_utils.ado)
+*   1. Dev mode: _rs_dev_utils get_version (defined in stata/dev/version_override.do)
 *   2. Production: {{VERSION}} (hardcoded, replaced during package export)
 * -----------------------------------------------------------------------------
-cap program drop _utils_get_version
 program define _utils_get_version, rclass
-	* Try dev override (only exists if _rs_dev_utils.ado is in adopath)
+	* Try dev override (only defined if stata/dev/version_override.do was sourced)
 	cap qui _rs_dev_utils get_version
 	if (_rc == 0) {
 		* Dev override exists - return its value
@@ -424,7 +471,6 @@ end
 *   _rs_utils get_filesize "/path/to/file.csv"
 *   local size = r(size)
 * -----------------------------------------------------------------------------
-cap program drop _utils_get_filesize
 program define _utils_get_filesize, rclass
 	args filepath
 
@@ -433,6 +479,149 @@ program define _utils_get_filesize, rclass
 	}
 
 	return scalar size = `size_result'
+end
+
+* -----------------------------------------------------------------------------
+* _rs_get_core_version: Return the hardcoded core version string
+* Returns r(version) with the core package version
+* -----------------------------------------------------------------------------
+program define _rs_get_core_version, rclass
+	return local version "1.0.0"
+end
+
+* -----------------------------------------------------------------------------
+* _rs_check_core_version: Verify core is new enough for a calling module
+* Takes one argument: the minimum required version string (e.g., "1.0.0")
+* Returns r(core_version) on success, or exits 198 with upgrade instructions
+* -----------------------------------------------------------------------------
+program define _rs_check_core_version, rclass
+	args required_version
+
+	* Get the current core version
+	local core_version "1.0.0"
+
+	* --- Parse core version into major.minor.patch ---
+	local work "`core_version'"
+	gettoken core_major work : work, parse(".")
+	gettoken dot work : work, parse(".")
+	gettoken core_minor work : work, parse(".")
+	gettoken dot work : work, parse(".")
+	local core_patch "`work'"
+
+	* --- Parse required version into major.minor.patch ---
+	local work "`required_version'"
+	gettoken req_major work : work, parse(".")
+	gettoken dot work : work, parse(".")
+	gettoken req_minor work : work, parse(".")
+	gettoken dot work : work, parse(".")
+	local req_patch "`work'"
+
+	* --- Compare versions ---
+	local too_old 0
+	if (`core_major' < `req_major') {
+		local too_old 1
+	}
+	else if (`core_major' == `req_major') {
+		if (`core_minor' < `req_minor') {
+			local too_old 1
+		}
+		else if (`core_minor' == `req_minor') {
+			if (`core_patch' < `req_patch') {
+				local too_old 1
+			}
+		}
+	}
+
+	if (`too_old') {
+		di as error "This module requires registream core version `required_version' or later."
+		di as error "You have version `core_version'."
+		di as error `"Run:  cap ado uninstall registream"'
+		di as error `"      net install registream, from("https://registream.org/install/stata/latest") replace"'
+		di as error `" or:  ssc install registream, replace"'
+		exit 198
+	}
+
+	return local core_version "`core_version'"
+end
+
+* -----------------------------------------------------------------------------
+* detect_installed_modules: Probe adopath for module .ado files and extract
+* their version from the `*! version X.Y.Z YYYY-MM-DD' header line.
+*
+* Matches Python's importlib.metadata.version() / R's packageVersion(): gives
+* the heartbeat URL builder a way to report every installed module without
+* relying on session globals set by the module's first-call side effect.
+*
+* Returns (rclass):
+*   r(autolabel_version)   "" if not installed, else the header version
+*   r(datamirror_version)  "" if not installed, else the header version
+* -----------------------------------------------------------------------------
+program define _utils_detect_modules, rclass
+	return local autolabel_version ""
+	return local datamirror_version ""
+
+	foreach m in autolabel datamirror {
+		cap qui findfile `m'.ado
+		if (_rc == 0) {
+			local path "`r(fn)'"
+			local ver ""
+			tempname fh
+			cap file open `fh' using "`path'", read text
+			if (_rc == 0) {
+				file read `fh' firstline
+				file close `fh'
+				if (regexm(`"`firstline'"', "^\*! version ([0-9][^ ]*)")) {
+					local ver = regexs(1)
+				}
+			}
+			return local `m'_version "`ver'"
+		}
+	}
+end
+
+* -----------------------------------------------------------------------------
+* detect_installed_trk_packages: List which of our packages currently have
+* a STATA.TRK entry, by name. Uses `ado dir` (the official interface) rather
+* than parsing STATA.TRK directly.
+*
+* Returns r(packages) = space-separated package names from
+* {registream, autolabel, datamirror} that are installed in the tracker.
+*
+* Why this matters: each module's .pkg bundles core files under the module's
+* TRK name, so a user who ran `net install autolabel` has NO `registream`
+* TRK entry. The old `registream update` flow blindly `ado uninstall`ed all
+* three names and failed silently on the ones that don't exist. This helper
+* lets us operate only on the entries that are actually there.
+* -----------------------------------------------------------------------------
+program define _utils_detect_trk_packages, rclass
+	return local packages ""
+
+	* Parse STATA.TRK directly — more reliable than routing `ado dir` output
+	* through a log channel (which interacts poorly with Stata's batch-mode
+	* default log). STATA.TRK is plain text at a fixed path; each package
+	* entry has an `N <name>.pkg` line as its identifier.
+	local trk_path "`c(sysdir_plus)'stata.trk"
+	cap confirm file "`trk_path'"
+	if (_rc != 0) exit 0
+
+	tempname fh
+	cap file open `fh' using "`trk_path'", read text
+	if (_rc != 0) exit 0
+
+	local found ""
+	file read `fh' line
+	while (r(eof) == 0) {
+		if (regexm(`"`line'"', "^N (registream|autolabel|datamirror)\.pkg$")) {
+			local pkg = regexs(1)
+			if (strpos(" `found' ", " `pkg' ") == 0) {
+				local found "`found' `pkg'"
+			}
+		}
+		file read `fh' line
+	}
+	file close `fh'
+
+	return local packages = trim("`found'")
 end
 
 * Define Mata function for file size

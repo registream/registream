@@ -1,37 +1,22 @@
 /*==============================================================================
-  RegiStream - Update Default Behavior Test
-
-  Purpose: Test that package is default update target
+  Test 07: Update Default Behavior
+  Tests: `registream update` (no args), `registream update package`,
+         `registream update dataset` (should error with helpful message)
   Author: Jeffrey Clark
-  Date: October 2025
-
-  Test Flow:
-  1. registream update (no args) → package update check (DEFAULT)
-  2. registream update package → package update check (EXPLICIT)
-  3. registream update dataset → dataset update check
-  4. autolabel update (no args) → package update check (DEFAULT via delegation)
-
-  Usage:
-    From repo root: do stata/tests/dofiles/07_update_default_behavior.do
 ==============================================================================*/
 
 clear all
 version 16.0
 
-*==============================================================================
-* Find project root using .project_root marker file
-*==============================================================================
-
+* Find project root
 local cwd = "`c(pwd)'"
 local project_root ""
-
 forvalues i = 0/5 {
 	local search_path = "`cwd'"
 	forvalues j = 1/`i' {
 		local search_path = "`search_path'/.."
 	}
-
-	capture confirm file "`search_path'/.project_root"
+	capture confirm file "`search_path'/.project-root"
 	if _rc == 0 {
 		quietly cd "`search_path'"
 		local project_root = "`c(pwd)'"
@@ -39,144 +24,115 @@ forvalues i = 0/5 {
 		continue, break
 	}
 }
-
 if "`project_root'" == "" {
-	di as error "ERROR: Could not find .project_root file"
+	di as error "ERROR: Could not find .project-root file"
 	exit 601
 }
-
-*==============================================================================
-* Set up paths and config
-*==============================================================================
 
 global PROJECT_ROOT "`project_root'"
 global TEST_DIR "$PROJECT_ROOT/stata/tests"
 global SRC_DIR "$PROJECT_ROOT/stata/src"
 global TEST_LOGS_DIR "$TEST_DIR/logs"
-
-* Create logs directory
 cap mkdir "$TEST_LOGS_DIR"
-
-* Enable auto-approve for test mode (bypasses user prompts)
-global REGISTREAM_AUTO_APPROVE "yes"
-
-* Clear all cached programs and load fresh
 discard
 adopath ++ "$SRC_DIR"
 do "$SRC_DIR/_rs_utils.ado"
-cap do "$SRC_DIR/_rs_dev_utils.ado"
+cap do "$SRC_DIR/../dev/host_override.do"
+do "$SRC_DIR/../dev/auto_approve.do"
 
 *==============================================================================
-* Start logging
+* Setup: Isolated temp directory
 *==============================================================================
 
-capture log close
-log using "$TEST_LOGS_DIR/07_update_default_behavior.log", replace text
+tempfile tmpbase
+local test_dir = "`tmpbase'_update_default"
+cap mkdir "`test_dir'"
+global registream_dir "`test_dir'"
 
 di as result ""
 di as result "============================================================"
-di as result "TEST: Update Command Default Behavior"
+di as result "Test 07: Update Default Behavior"
 di as result "============================================================"
 di as result ""
 
-* =============================================================================
-* TEST 1: registream update (no args) → should default to package
-* =============================================================================
-di as result "------------------------------------------------------------"
-di as result "TEST 1: registream update (no args)"
-di as result "------------------------------------------------------------"
-di as text ""
-di as text "Expected: Should check for PACKAGE updates (default)"
-di as text ""
+local tests_passed = 0
+local tests_total = 3
 
-* Note: This will actually try to hit the API, which may fail if offline
-* We're just testing that it attempts a package check, not dataset check
+*==============================================================================
+* Test 1: `registream update` (no arguments) defaults to package check
+*==============================================================================
+
+di as text "Test 1/3: registream update (no args) defaults to package update"
+
 cap noi registream update
+local rc1 = _rc
 
-di as text ""
-di as result "✓ PASS: Command executed without syntax error"
-di as result ""
-
-* =============================================================================
-* TEST 2: registream update package (explicit) → package check
-* =============================================================================
-di as result "------------------------------------------------------------"
-di as result "TEST 2: registream update package (explicit)"
-di as result "------------------------------------------------------------"
-di as text ""
-di as text "Expected: Should check for PACKAGE updates (explicit)"
-di as text ""
-
-cap noi registream update package
-
-di as text ""
-di as result "✓ PASS: Command executed without syntax error"
-di as result ""
-
-* =============================================================================
-* TEST 3: registream update dataset → dataset check
-* =============================================================================
-di as result "------------------------------------------------------------"
-di as result "TEST 3: registream update dataset"
-di as result "------------------------------------------------------------"
-di as text ""
-di as text "Expected: Should check for DATASET updates"
-di as text ""
-
-* Note: This will fail because update_datasets_interactive doesn't exist yet
-* We're just verifying it routes to the dataset path
-cap noi registream update dataset
-
-if (_rc == 0) {
-	di as result "✓ PASS: Dataset update path executed"
+* Should run without error (rc=0) - defaults to package update check
+if (`rc1' == 0) {
+	di as result "  [PASS] registream update ran successfully (defaults to package)"
+	local ++tests_passed
 }
 else {
-	di as text "Note: Dataset update not yet implemented (expected)"
-	di as result "✓ PASS: Correctly routed to dataset path"
+	di as error "  [FAIL] registream update failed with rc=`rc1'"
 }
 
-di as text ""
+*==============================================================================
+* Test 2: `registream update package` explicitly checks package
+*==============================================================================
+
+di as text "Test 2/3: registream update package"
+
+cap noi registream update package
+local rc2 = _rc
+
+if (`rc2' == 0) {
+	di as result "  [PASS] registream update package ran successfully"
+	local ++tests_passed
+}
+else {
+	di as error "  [FAIL] registream update package failed with rc=`rc2'"
+}
+
+*==============================================================================
+* Test 3: `registream update dataset` should error with helpful message
+*==============================================================================
+
+di as text "Test 3/3: registream update dataset errors with guidance"
+
+cap noi registream update dataset
+local rc3 = _rc
+
+* Should fail with 198 (unknown update target) and suggest autolabel
+if (`rc3' == 198) {
+	di as result "  [PASS] registream update dataset correctly errors (rc=198)"
+	di as text "         (Directs user to autolabel for dataset updates)"
+	local ++tests_passed
+}
+else if (`rc3' == 0) {
+	di as error "  [FAIL] registream update dataset should not succeed (datasets are in autolabel)"
+}
+else {
+	di as error "  [FAIL] Unexpected return code: `rc3' (expected 198)"
+}
+
+*==============================================================================
+* Cleanup
+*==============================================================================
+
+cap erase "`test_dir'/config_stata.csv"
+cap _rs_utils del_folder_rec "`test_dir'"
+global registream_dir ""
+
+*==============================================================================
+* Summary
+*==============================================================================
+
+di as result ""
+di as result "============================================================"
+di as result "Test 07 Summary: `tests_passed'/`tests_total' tests passed"
+di as result "============================================================"
 di as result ""
 
-* =============================================================================
-* TEST 4: autolabel update (delegates to registream)
-* =============================================================================
-di as result "------------------------------------------------------------"
-di as result "TEST 4: autolabel update (delegation)"
-di as result "------------------------------------------------------------"
-di as text ""
-di as text "Expected: Should delegate to registream and check PACKAGE (default)"
-di as text ""
-
-cap noi autolabel update
-
-di as text ""
-di as result "✓ PASS: Command executed via delegation"
-di as result ""
-
-* =============================================================================
-* SUMMARY
-* =============================================================================
-di as result "============================================================"
-di as result "SUMMARY: Update Command Behavior"
-di as result "============================================================"
-di as text ""
-
-di as result "✓ registream update          → Package update (DEFAULT)"
-di as result "✓ registream update package  → Package update (EXPLICIT)"
-di as result "✓ registream update dataset  → Dataset update"
-di as result "✓ autolabel update           → Package update (via delegation)"
-
-di as text ""
-di as text "Usage examples:"
-di as text "  . registream update              {c |} Check for package updates"
-di as text "  . autolabel update               {c |} Check for package updates"
-di as text "  . registream update dataset      {c |} Check for dataset updates"
-di as text "  . autolabel update datasets      {c |} Check for dataset updates"
-
-di as text ""
-di as result "============================================================"
-di as result "ALL TESTS PASSED"
-di as result "============================================================"
-
-log close
+if (`tests_passed' < `tests_total') {
+	exit 1
+}

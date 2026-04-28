@@ -1,28 +1,15 @@
-.DS_Store
+# Stata dev overrides are now tracked .template / dedicated .do files
+# under stata/dev/ (no gitignored active copy needed).
+
+# Logs
+*.log
+
+# Stata temp files
+*.smcl
 
 # Python
+.pytest_cache/
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
 
-# Exports
-exports/*
-*.dta
-
-# Config files with tokens
-python/config/*
-python/dist/*
-python/build/*
-python/src/registream.egg-info/*
-
-
-# Development configuration (never commit)
-# These files can contain API host overrides and batch mode settings
-stata/src/_rs_dev_utils.ado
-_rs_dev_utils.ado
-# Test outputs (git-ignored, but keep test scripts)
-stata/tests/data/*.dta
-stata/tests/logs/*.log
-stata/tests/logs/*.smcl
-
+# OS files
+.DS_Store

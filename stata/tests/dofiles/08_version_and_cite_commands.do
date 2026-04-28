@@ -1,39 +1,29 @@
 /*==============================================================================
-  RegiStream - Version and Citation Commands Test
+  Test 08: Version and Info Commands
+  Tests: `registream version`, `registream info`
+  (Core commands only - autolabel aliases are tested in the autolabel repo)
 
-  Purpose: Test version and cite commands and their aliases
+  `registream cite` is intentionally NOT tested here: its body contains a
+  build-time placeholder (``{{CITATION_REGISTREAM_ADO_CITE_BLOCK}}``) that
+  only gets substituted when export_package.py copies the file to the
+  server directory. Source-mode adopath loading cannot parse the raw
+  placeholder. End-to-end cite coverage belongs in the autolabel repo's
+  test 30, which does a real `net install` before exercising commands.
   Author: Jeffrey Clark
-  Date: October 2025
-
-  Test Flow:
-  1. registream version → Shows version
-  2. autolabel version → Shows version (alias)
-  3. registream cite → Shows citation
-  4. autolabel cite → Shows citation (alias)
-  5. registream info → Shows citation link at bottom
-  6. autolabel info → Shows citation link at bottom
-
-  Usage:
-    From repo root: do stata/tests/dofiles/08_version_and_cite_commands.do
 ==============================================================================*/
 
 clear all
 version 16.0
 
-*==============================================================================
-* Find project root using .project_root marker file
-*==============================================================================
-
+* Find project root
 local cwd = "`c(pwd)'"
 local project_root ""
-
 forvalues i = 0/5 {
 	local search_path = "`cwd'"
 	forvalues j = 1/`i' {
 		local search_path = "`search_path'/.."
 	}
-
-	capture confirm file "`search_path'/.project_root"
+	capture confirm file "`search_path'/.project-root"
 	if _rc == 0 {
 		quietly cd "`search_path'"
 		local project_root = "`c(pwd)'"
@@ -41,149 +31,100 @@ forvalues i = 0/5 {
 		continue, break
 	}
 }
-
 if "`project_root'" == "" {
-	di as error "ERROR: Could not find .project_root file"
+	di as error "ERROR: Could not find .project-root file"
 	exit 601
 }
-
-*==============================================================================
-* Set up paths and config
-*==============================================================================
 
 global PROJECT_ROOT "`project_root'"
 global TEST_DIR "$PROJECT_ROOT/stata/tests"
 global SRC_DIR "$PROJECT_ROOT/stata/src"
 global TEST_LOGS_DIR "$TEST_DIR/logs"
-
-* Create logs directory
 cap mkdir "$TEST_LOGS_DIR"
-
-* Enable auto-approve for test mode (bypasses user prompts)
-global REGISTREAM_AUTO_APPROVE "yes"
-
-* Clear all cached programs and load fresh
 discard
 adopath ++ "$SRC_DIR"
 do "$SRC_DIR/_rs_utils.ado"
-cap do "$SRC_DIR/_rs_dev_utils.ado"
+cap do "$SRC_DIR/../dev/host_override.do"
+do "$SRC_DIR/../dev/auto_approve.do"
 
 *==============================================================================
-* Start logging
+* Setup: Isolated temp directory
 *==============================================================================
 
-capture log close
-log using "$TEST_LOGS_DIR/08_version_and_cite_commands.log", replace text
+tempfile tmpbase
+local test_dir = "`tmpbase'_version_cite"
+cap mkdir "`test_dir'"
+global registream_dir "`test_dir'"
 
 di as result ""
 di as result "============================================================"
-di as result "TEST: Version and Citation Commands"
+di as result "Test 08: Version and Info Commands"
 di as result "============================================================"
 di as result ""
 
-* =============================================================================
-* TEST 1: registream version
-* =============================================================================
-di as result "------------------------------------------------------------"
-di as result "TEST 1: registream version"
-di as result "------------------------------------------------------------"
-di as text ""
+local tests_passed = 0
+local tests_total = 2
 
-registream version
+*==============================================================================
+* Test 1: `registream version`
+*==============================================================================
 
-di as result "✓ PASS: registream version executed"
+di as text "Test 1/2: registream version"
+
+cap noi registream version
+local rc1 = _rc
+
+if (`rc1' == 0) {
+	* Also verify that _rs_utils get_version returns something
+	_rs_utils get_version
+	local ver "`r(version)'"
+	if ("`ver'" != "") {
+		di as result "  [PASS] registream version ran successfully (version: `ver')"
+		local ++tests_passed
+	}
+	else {
+		di as error "  [FAIL] registream version ran but get_version returned empty"
+	}
+}
+else {
+	di as error "  [FAIL] registream version failed with rc=`rc1'"
+}
+
+*==============================================================================
+* Test 2: `registream info`
+*==============================================================================
+
+di as text "Test 2/2: registream info"
+
+cap noi registream info
+local rc3 = _rc
+
+if (`rc3' == 0) {
+	di as result "  [PASS] registream info ran successfully"
+	local ++tests_passed
+}
+else {
+	di as error "  [FAIL] registream info failed with rc=`rc3'"
+}
+
+*==============================================================================
+* Cleanup
+*==============================================================================
+
+cap erase "`test_dir'/config_stata.csv"
+cap _rs_utils del_folder_rec "`test_dir'"
+global registream_dir ""
+
+*==============================================================================
+* Summary
+*==============================================================================
+
 di as result ""
-
-* =============================================================================
-* TEST 2: autolabel version (alias)
-* =============================================================================
-di as result "------------------------------------------------------------"
-di as result "TEST 2: autolabel version (alias)"
-di as result "------------------------------------------------------------"
-di as text ""
-
-autolabel version
-
-di as result "✓ PASS: autolabel version executed (alias works)"
-di as result ""
-
-* =============================================================================
-* TEST 3: registream cite
-* =============================================================================
-di as result "------------------------------------------------------------"
-di as result "TEST 3: registream cite"
-di as result "------------------------------------------------------------"
-di as text ""
-
-registream cite
-
-di as result "✓ PASS: registream cite executed"
-di as result ""
-
-* =============================================================================
-* TEST 4: autolabel cite (alias)
-* =============================================================================
-di as result "------------------------------------------------------------"
-di as result "TEST 4: autolabel cite (alias)"
-di as result "------------------------------------------------------------"
-di as text ""
-
-autolabel cite
-
-di as result "✓ PASS: autolabel cite executed (alias works)"
-di as result ""
-
-* =============================================================================
-* TEST 5: registream info (shows citation link)
-* =============================================================================
-di as result "------------------------------------------------------------"
-di as result "TEST 5: registream info (with citation link)"
-di as result "------------------------------------------------------------"
-di as text ""
-
-registream info
-
-di as text "Expected: Citation link appears at bottom"
-di as result "✓ PASS: registream info shows citation link"
-di as result ""
-
-* =============================================================================
-* TEST 6: autolabel info (shows citation link)
-* =============================================================================
-di as result "------------------------------------------------------------"
-di as result "TEST 6: autolabel info (with citation link)"
-di as result "------------------------------------------------------------"
-di as text ""
-
-autolabel info
-
-di as text "Expected: Citation link appears at bottom"
-di as result "✓ PASS: autolabel info shows citation link"
-di as result ""
-
-* =============================================================================
-* SUMMARY
-* =============================================================================
 di as result "============================================================"
-di as result "SUMMARY: Version and Citation Commands"
+di as result "Test 08 Summary: `tests_passed'/`tests_total' tests passed"
 di as result "============================================================"
-di as text ""
+di as result ""
 
-di as result "✓ registream version     → Shows version 2.0.0"
-di as result "✓ autolabel version      → Alias works (delegates to registream)"
-di as result "✓ registream cite        → Shows full citation with BibTeX"
-di as result "✓ autolabel cite         → Alias works (delegates to registream)"
-di as result "✓ registream info        → Shows citation link at bottom"
-di as result "✓ autolabel info         → Shows citation link at bottom"
-
-di as text ""
-di as text "All aliases organized cleanly in autolabel.ado:"
-di as text "  Lines 11-44: ALIASES section (info, update, version, cite)"
-di as text "  Lines 745-772: Alias implementations"
-
-di as text ""
-di as result "============================================================"
-di as result "ALL TESTS PASSED"
-di as result "============================================================"
-
-log close
+if (`tests_passed' < `tests_total') {
+	exit 1
+}

@@ -1,0 +1,6 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^dev$
+^\.github$
+^cran-comments\.md$
+^publish\.sh$

@@ -1,0 +1,11 @@
+# Scoped to python/ — does not affect Stata build/ at the repo root.
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/

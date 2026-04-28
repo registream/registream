@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "registream"
+version = "3.0.0"
+description = "RegiStream: Infrastructure for Register Data Research."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "Jeffrey Clark", email = "jeffrey@registream.org" },
+    { name = "Jie Wen", email = "jie@registream.org" },
+]
+dependencies = [
+    "registream-core>=3.0,<4.0",
+    "registream-autolabel>=3.0,<4.0",
+]
+
+# Local-dev path overrides. Stripped from the published wheel; pip never sees
+# this section. Assumes all RegiStream repos are cloned as siblings under one
+# parent directory (the convention in registream-org/).
+[tool.uv.sources]
+registream-core = { path = "../registream-core", editable = true }
+registream-autolabel = { path = "../../../autolabel/python/registream-autolabel", editable = true }
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true

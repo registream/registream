@@ -1,0 +1,20 @@
+# Manually kept in sync with the citation source of truth at
+# citations.yaml. If that file changes, update this one too.
+
+citHeader("To cite RegiStream in publications, please use:")
+
+bibentry(
+  bibtype = "Misc",
+  author  = c(
+    person("Jeffrey", "Clark"),
+    person("Jie",     "Wen")
+  ),
+  title   = "RegiStream: Infrastructure for Register Data Research",
+  year    = "2024",
+  note    = sprintf("R package version %s", meta$Version),
+  url     = "https://registream.org",
+  textVersion = sprintf(
+    "Clark, J. & Wen, J. (2024-). RegiStream: Infrastructure for Register Data Research (Version %s). https://registream.org",
+    meta$Version
+  )
+)

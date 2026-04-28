@@ -1,0 +1,28 @@
+Package: registream
+Title: Register-Data Infrastructure for Statistical Analysis
+Version: 3.0.0
+Authors@R: c(
+    person("Jeffrey", "Clark", role = c("aut", "cre"),
+           email = "jeffrey@registream.org"),
+    person("Jie", "Wen", role = "aut",
+           email = "jie@registream.org"))
+Description: Configuration, updates, telemetry, and shared utilities
+    for register-data packages. Provides the infrastructure layer for
+    the RegiStream ecosystem of register-data tools.
+License: BSD_3_clause + file LICENSE
+Depends:
+    R (>= 4.1)
+Imports:
+    curl,
+    digest,
+    jsonlite,
+    tools,
+    utils
+Suggests:
+    haven,
+    testthat (>= 3.0.0),
+    withr,
+    knitr,
+    rmarkdown
+Encoding: UTF-8
+Config/testthat/edition: 3

@@ -1,4 +1,4 @@
-*! version 2.0.1  01nov2025
+*! version {{VERSION}} {{DATE}}
 * RegiStream: Main command entry point
 * Author: Jeffrey Clark
 *
@@ -9,25 +9,10 @@
 *   registream version
 *   registream cite
 
-cap program drop registream
-cap program drop _registream_wrapper_start
-cap program drop _registream_wrapper_end
-cap program drop _registream_update
-cap program drop _registream_info
-cap program drop _registream_config
-cap program drop _registream_version
-cap program drop _registream_cite
-cap program drop _registream_stats
-
 program define registream
 	version 16.0
 
-	* Load dev config if it exists (only during development, not in production package)
-	* This file is in .gitignore and won't be in the distributed package
-	* Dev config can override _rs_utils get_version to return a dev version
-	cap qui _rs_dev_config
-
-	* Get version from helper function (can be overridden by dev/test mode)
+	* Get version from helper function (can be overridden by stata/dev/version_override.do)
 	_rs_utils get_version
 	local REGISTREAM_VERSION "`r(version)'"
 
@@ -35,7 +20,7 @@ program define registream
 	* MASTER WRAPPER (START): Usage tracking + Background update check
 	* Runs for ALL registream commands
 	* ==========================================================================
-	_registream_wrapper_start "`REGISTREAM_VERSION'" "`0'"
+	_registream_wrapper_start "`REGISTREAM_VERSION'" `"`0'"'
 	local registream_dir "`r(registream_dir)'"
 
 	* Parse first argument (subcommand)
@@ -43,32 +28,37 @@ program define registream
 
 	if ("`subcmd'" == "update") {
 		_registream_update `rest'
-		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" "`0'"
+		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" `"`0'"'
 		exit 0
 	}
 	else if ("`subcmd'" == "info") {
 		_registream_info `rest'
-		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" "`0'"
+		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" `"`0'"'
 		exit 0
 	}
 	else if ("`subcmd'" == "config") {
 		_registream_config `rest'
-		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" "`0'"
+		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" `"`0'"'
 		exit 0
 	}
 	else if ("`subcmd'" == "version") {
 		_registream_version `rest'
-		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" "`0'"
+		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" `"`0'"'
 		exit 0
 	}
 	else if ("`subcmd'" == "cite") {
 		_registream_cite `rest'
-		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" "`0'"
+		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" `"`0'"'
 		exit 0
 	}
 	else if ("`subcmd'" == "stats") {
 		_registream_stats `rest'
-		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" "`0'"
+		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" `"`0'"'
+		exit 0
+	}
+	else if ("`subcmd'" == "uninstall") {
+		_registream_uninstall `rest'
+		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" `"`0'"'
 		exit 0
 	}
 	else if ("`subcmd'" == "") {
@@ -81,16 +71,18 @@ program define registream
 		di as text "  {cmd:registream version}                           - Show package version"
 		di as text "  {cmd:registream cite}                              - Show citation"
 		di as text "  {cmd:registream stats} [all]                       - Show usage statistics"
+		di as text "  {cmd:registream uninstall} [all|registream|autolabel|datamirror]"
+		di as text "                                                       - Uninstall packages"
 		di as text ""
 		di as text "See {help registream:help registream} for details"
-		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" "`0'"
+		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" `"`0'"'
 		exit 198
 	}
 	else {
 		di as error "Unknown subcommand: `subcmd'"
-		di as text "Available: update, info, config, version, cite, stats"
+		di as text "Available: update, info, config, version, cite, stats, uninstall"
 		di as text "See {help registream:help registream} for details"
-		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" "`0'"
+		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" `"`0'"'
 		exit 198
 	}
 end
@@ -159,14 +151,45 @@ program define _registream_update
 					di as result "Updating RegiStream..."
 					di as text "{hline 60}"
 
-					* Run net install to update package
-					cap noi net install registream, from(https://registream.org/stata) replace
+					* Resolve install URL via dev-override-aware helper so
+					* `do test_manual.do` flows install from localhost:5000.
+					_rs_utils get_install_url
+					local install_url "`r(url)'"
 
-					if (_rc == 0) {
+					* Detect which of our packages currently have a TRK entry,
+					* then ensure `registream` is in the reinstall set. Under
+					* the decoupled packaging model, core is a prerequisite
+					* for every module; users on the old self-bundled scheme
+					* have their `autolabel` TRK entry owning core files, so
+					* an uninstall-reinstall cycle would strand them without
+					* core unless we explicitly add `registream` here.
+					_rs_utils detect_installed_trk_packages
+					local installed_pkgs "`r(packages)'"
+					if ("`installed_pkgs'" == "") {
+						* First-time install via `registream update' — treat
+						* as a core-only install. Modules installed separately
+						* on demand.
+						local installed_pkgs "registream"
+					}
+					if (strpos(" `installed_pkgs' ", " registream ") == 0) {
+						local installed_pkgs "registream `installed_pkgs'"
+					}
+
+					foreach p of local installed_pkgs {
+						cap ado uninstall `p'
+					}
+
+					local all_ok = 1
+					foreach p of local installed_pkgs {
+						cap noi net install `p', from("`install_url'") replace
+						if (_rc != 0) local all_ok = 0
+					}
+
+					if (`all_ok' == 1) {
 						di as text "{hline 60}"
 						di as result "✓ Update successful!"
 						di as text ""
-						di as text "RegiStream has been updated to version `latest_version'"
+						di as text "Reinstalled: `installed_pkgs'"
 						di as text "Please restart Stata or reload the package to use the new version"
 					}
 					else {
@@ -174,7 +197,8 @@ program define _registream_update
 						di as error "✗ Update failed"
 						di as text ""
 						di as text "Please try updating manually:"
-						di as text "  . net install registream, from(https://registream.org/stata) replace"
+						di as text `"  cap ado uninstall registream"'
+						di as text `"  net install registream, from("https://registream.org/install/stata/latest") replace"'
 					}
 				}
 				else {
@@ -183,7 +207,8 @@ program define _registream_update
 					di as text "  . registream update package"
 					di as text ""
 					di as text "Or update manually:"
-					di as text "  . net install registream, from(https://registream.org/stata) replace"
+					di as text `"  . cap ado uninstall registream"'
+					di as text `"  . net install registream, from("https://registream.org/install/stata/latest") replace"'
 				}
 			}
 			else {
@@ -196,37 +221,10 @@ program define _registream_update
 		di as result ""
 	}
 
-	* If "dataset" or "datasets", check dataset updates
-	else if ("`what'" == "dataset" | "`what'" == "datasets") {
-		* Validate: version() requires domain()
-		if ("`version'" != "" & "`domain'" == "") {
-			di as error "Error: version() parameter requires domain() to be specified"
-			di as text ""
-			di as text "Example: autolabel update datasets, domain(scb) version(20251014)"
-			exit 198
-		}
-
-		di as result ""
-		di as result "{hline 60}"
-		di as result "RegiStream Dataset Update Check"
-		di as result "{hline 60}"
-		di as result ""
-
-		* Call interactive update workflow
-		if ("`domain'" != "" | "`lang'" != "" | "`version'" != "") {
-			_rs_updates update_datasets_interactive "`registream_dir'", domain("`domain'") lang("`lang'") version("`version'")
-		}
-		else {
-			_rs_updates update_datasets_interactive "`registream_dir'"
-		}
-
-		di as result ""
-		di as result "{hline 60}"
-		di as result ""
-	}
 	else {
 		di as error "Unknown update target: `what'"
-		di as text "Usage: registream update [package|dataset|datasets]  (default: package)"
+		di as text "Usage: registream update [package]  (default: package)"
+		di as text "For dataset updates, use: autolabel update datasets"
 		exit 198
 	}
 end
@@ -265,13 +263,21 @@ program define _registream_info
 	local auto_update = r(value)
 	if ("`auto_update'" == "") local auto_update "true"
 
+	_rs_config get "`registream_dir'" "dm_min_cell_size"
+	local dm_min_cell = r(value)
+	if ("`dm_min_cell'" == "") local dm_min_cell "50"
+
+	_rs_config get "`registream_dir'" "dm_quantile_trim"
+	local dm_qt = r(value)
+	if ("`dm_qt'" == "") local dm_qt "1"
+
 	* Display info
 	di as result ""
 	di as result "{hline 60}"
 	di as result "RegiStream Configuration"
 	di as result "{hline 60}"
 	di as text "Directory:        {result:`registream_dir'}"
-	di as text "Config file:      {result:`registream_dir'/config_stata.yaml}"
+	di as text "Config file:      {result:`registream_dir'/config_stata.csv}"
 	di as text ""
 	di as text "Package:"
 	di as text "  version:         {result:`REGISTREAM_VERSION'}"
@@ -281,11 +287,15 @@ program define _registream_info
 	di as text "  telemetry_enabled:   {result:`telemetry'} (sends anonymized data to registream.org)"
 	di as text "  internet_access:     {result:`internet'}"
 	di as text "  auto_update_check:   {result:`auto_update'}"
+	di as text "  dm_min_cell_size:    {result:`dm_min_cell'} (datamirror minimum cell size for privacy suppression)"
+	di as text "  dm_quantile_trim:    {result:`dm_qt'} (datamirror quantile trim percent for continuous SDC)"
+	di as text ""
+	di as text "Change any setting with: {bf:registream config, <key>(<value>)}"
 	di as result "{hline 60}"
 	di as text ""
 	di as text "Citation:"
-	di as text "  Clark, J. & Wen, J. (2024–). RegiStream: Streamline Your"
-	di as text "  Register Data Workflow. Available at: https://registream.org"
+	di as text "  Clark, J. & Wen, J. (2024–). RegiStream:"
+	di as text "  Infrastructure for Register Data Research. https://registream.org"
 	di as text ""
 	di as text "Full citation (with version & datasets): {stata registream cite:registream cite}"
 	di as result ""
@@ -297,7 +307,7 @@ end
 program define _registream_config
 	version 16.0
 
-	syntax [, USAGE_logging(string) TELEMETRY_enabled(string) INTERNET_access(string) AUTO_update_check(string)]
+	syntax [, USAGE_logging(string) TELEMETRY_enabled(string) INTERNET_access(string) AUTO_update_check(string) dm_min_cell_size(integer -1) dm_quantile_trim(real -1)]
 
 	* Get registream directory
 	_rs_utils get_dir
@@ -307,10 +317,24 @@ program define _registream_config
 	_rs_config init "`registream_dir'"
 
 	* If no options, just show config
-	if ("`usage_logging'" == "" & "`telemetry_enabled'" == "" & "`internet_access'" == "" & "`auto_update_check'" == "") {
+	if ("`usage_logging'" == "" & "`telemetry_enabled'" == "" & "`internet_access'" == "" & "`auto_update_check'" == "" & `dm_min_cell_size' < 0 & `dm_quantile_trim' < 0) {
 		_registream_info
 		exit 0
 	}
+
+	* Probe writability once before touching any setting. One check covers
+	* every setting in this command (plus any added later) and keeps the
+	* failure message out of background bookkeeping writers (_rs_updates,
+	* autolabel update checks) that wrap their own _rs_config set in cap.
+	tempname __rs_probe
+	cap file open `__rs_probe' using "`registream_dir'/config_stata.csv", write append
+	if (_rc != 0) {
+		di as error "Cannot write config: `registream_dir'/config_stata.csv is read-only."
+		di as text  "Point RegiStream at a writable directory with:"
+		di as text  "  {bf:global registream_dir \"/path/you/own\"}"
+		exit 198
+	}
+	cap file close `__rs_probe'
 
 	* Update usage_logging if provided
 	if ("`usage_logging'" != "") {
@@ -350,6 +374,30 @@ program define _registream_config
 		}
 		_rs_config set "`registream_dir'" "auto_update_check" "`auto_update_check'"
 		di as result "✓ auto_update_check set to: `auto_update_check'"
+	}
+
+	* Update dm_min_cell_size if provided (datamirror privacy suppression threshold)
+	if (`dm_min_cell_size' >= 0) {
+		if (`dm_min_cell_size' < 1) {
+			di as error "dm_min_cell_size must be a positive integer"
+			exit 198
+		}
+		_rs_config set "`registream_dir'" "dm_min_cell_size" "`dm_min_cell_size'"
+		di as result "✓ dm_min_cell_size set to: `dm_min_cell_size'"
+	}
+
+	* Update dm_quantile_trim if provided (datamirror continuous SDC threshold, percent)
+	if (`dm_quantile_trim' >= 0) {
+		if (`dm_quantile_trim' > 50) {
+			di as error "dm_quantile_trim must be between 0 and 50 (percent)"
+			exit 198
+		}
+		_rs_config set "`registream_dir'" "dm_quantile_trim" "`dm_quantile_trim'"
+		di as result "✓ dm_quantile_trim set to: `dm_quantile_trim'"
+		if (`dm_quantile_trim' == 0) {
+			di as text "  Note: quantile_trim(0) stores raw max/min in q0/q100." ///
+				" Set only if the data were top/bottom-coded upstream."
+		}
 	}
 
 	di as text ""
@@ -393,33 +441,19 @@ program define _registream_cite
 	di as text ""
 	di as text "To cite RegiStream in publications, please use:"
 	di as text ""
-	di as text "  Clark, J. & Wen, J. (2024–). RegiStream: Streamline Your"
-	di as text "  Register Data Workflow. Available at: https://registream.org"
-	di as text ""
-	di as text "For version-specific citation (recommended for replicability):"
-	di as text ""
-	di as text "  Clark, J. & Wen, J. (2024–). RegiStream: Streamline Your"
-	di as text "  Register Data Workflow (Version `REGISTREAM_VERSION')."
-	di as text "  Available at: https://registream.org"
-	di as text ""
-	di as text "BibTeX:"
-	di as text "{hline 60}"
-	di as text "@software{clark2024registream,"
-	di as text "  author  = {Clark, Jeffrey and Wen, Jie},"
-	di as text "  title   = {RegiStream: Streamline Your Register Data Workflow},"
-	di as text "  version = {`REGISTREAM_VERSION'},"
-	di as text "  year    = {2024--},"
-	di as text "  url     = {https://registream.org}"
-	di as text "}"
-	di as text "{hline 60}"
+{{CITATION_REGISTREAM_ADO_CITE_BLOCK}}
 	di as text ""
 
-	* Show installed dataset versions for reproducibility
+	* Show installed dataset versions for reproducibility. One line per
+	* unique (domain, version) pair; datasets.csv has one row per cached
+	* file (variables/values/scope/... × language), so we dedup up to the
+	* level users care about. Each line ends with the catalog URL so users
+	* can look up provider attribution, source links, and version history.
 	di as text "Installed datasets:"
 	di as text ""
 
-	* Check for datasets.csv in autolabel_keys directory
-	local autolabel_dir "`registream_dir'/autolabel_keys"
+	* Check for datasets.csv in autolabel directory
+	local autolabel_dir "`registream_dir'/autolabel"
 	local datasets_csv "`autolabel_dir'/datasets.csv"
 	cap confirm file "`datasets_csv'"
 	if (_rc == 0) {
@@ -431,16 +465,20 @@ program define _registream_cite
 		* Skip header line
 		file read `fh' line
 
+		* Columns: dataset_key;domain;type;lang;version;schema;downloaded;source;file_size;last_checked
+		local seen_pairs ""
 		local found_any = 0
 		while r(eof)==0 {
-			* Parse semicolon-delimited line
-			* Format: dataset_key;domain;type;lang;version;schema;downloaded;source;file_size;last_checked
-			local dataset_key = trim(word(subinstr("`line'", ";", " ", .), 1))
+			local dataset_domain = trim(word(subinstr("`line'", ";", " ", .), 2))
 			local dataset_version = trim(word(subinstr("`line'", ";", " ", .), 5))
 
-			if ("`dataset_key'" != "" & "`dataset_version'" != "") {
-				di as text "  • `dataset_key' (version: `dataset_version')"
-				local found_any = 1
+			if ("`dataset_domain'" != "" & "`dataset_version'" != "") {
+				local pair "`dataset_domain'|`dataset_version'"
+				if (strpos(" `seen_pairs' ", " `pair' ") == 0) {
+					local seen_pairs "`seen_pairs' `pair'"
+					di as text "  • `dataset_domain' v`dataset_version': https://registream.org/catalog/`dataset_domain'"
+					local found_any = 1
+				}
 			}
 
 			file read `fh' line
@@ -487,12 +525,108 @@ program define _registream_stats
 end
 
 * =============================================================================
+* Subcommand: registream uninstall [all|<module>]
+*
+* Decoupled packaging (one TRK entry per package) makes selective uninstall
+* trivial — `ado uninstall X` just works when X is a real TRK entry. This
+* helper wraps the dance with (a) argument validation, (b) a report of what
+* remains so users can decide if they want to remove more, and (c) a warning
+* when core is removed while modules are still installed.
+* =============================================================================
+program define _registream_uninstall
+	args what
+
+	if ("`what'" == "") {
+		di as error "Missing argument. Specify what to uninstall:"
+		di as text "  {cmd:registream uninstall all}          - remove everything"
+		di as text "  {cmd:registream uninstall registream}   - remove core only"
+		di as text "  {cmd:registream uninstall autolabel}    - remove autolabel only"
+		di as text "  {cmd:registream uninstall datamirror}   - remove datamirror only"
+		exit 198
+	}
+
+	if (!inlist("`what'", "all", "registream", "autolabel", "datamirror")) {
+		di as error "Unknown uninstall target: `what'"
+		di as error "Valid: all, registream, autolabel, datamirror"
+		exit 198
+	}
+
+	* Snapshot current installation state from STATA.TRK.
+	_rs_utils detect_installed_trk_packages
+	local installed "`r(packages)'"
+
+	if ("`installed'" == "") {
+		di as text "No RegiStream packages are installed."
+		exit 0
+	}
+
+	if ("`what'" == "all") {
+		* Remove modules first, core last, so core isn't needed during
+		* the module `ado uninstall` call.
+		foreach p in autolabel datamirror registream {
+			if (strpos(" `installed' ", " `p' ") > 0) {
+				di as text "Uninstalling `p'..."
+				cap noi ado uninstall `p'
+			}
+		}
+		di as result ""
+		di as result "{hline 60}"
+		di as result "✓ All RegiStream packages uninstalled."
+		di as result "{hline 60}"
+		exit 0
+	}
+
+	* Single-package uninstall
+	if (strpos(" `installed' ", " `what' ") == 0) {
+		di as error "`what' is not installed."
+		di as text "Installed packages: `installed'"
+		exit 111
+	}
+
+	di as text "Uninstalling `what'..."
+	cap noi ado uninstall `what'
+	if (_rc != 0) {
+		di as error "✗ Uninstall of `what' failed (rc=`=_rc')."
+		exit _rc
+	}
+
+	di as result "✓ Uninstalled `what'."
+
+	* Refresh installed-list and report what's left.
+	_rs_utils detect_installed_trk_packages
+	local remaining "`r(packages)'"
+
+	di as text ""
+	if ("`remaining'" == "") {
+		di as text "No RegiStream packages remain installed."
+	}
+	else {
+		di as text "Remaining packages: `remaining'"
+		di as text ""
+		di as text "  {cmd:registream uninstall all}          - remove everything"
+		di as text "  {cmd:registream uninstall <name>}       - remove individually"
+	}
+
+	* Warn if core was removed while modules remain. Those modules will
+	* error out on first invocation via their runtime `cap findfile' check.
+	if ("`what'" == "registream" & "`remaining'" != "") {
+		di as text ""
+		di as error "Warning: registream core was removed, but these modules remain:"
+		di as error "    `remaining'"
+		di as error "They will error at runtime until registream is reinstalled:"
+		di as error `"  net install registream, from("https://registream.org/install/stata/latest") replace"'
+	}
+end
+
+* =============================================================================
 * MASTER WRAPPER FUNCTIONS
 * =============================================================================
 
 * Wrapper start: Initialize everything + log usage + background check
 program define _registream_wrapper_start, rclass
-	args current_version command_line
+	* gettoken preserves inner quotes in command_line
+	gettoken current_version 0 : 0
+	gettoken command_line 0 : 0
 
 	* Get registream directory
 	_rs_utils get_dir
@@ -505,12 +639,15 @@ program define _registream_wrapper_start, rclass
 	* Parse command for conditional logic
 	local first_word : word 1 of `command_line'
 
-	* Log local usage (fast, synchronous) - skip "stats" to avoid recursion
+	* Log local usage (fast, synchronous) - skip "stats" to avoid recursion.
+	* usage_stata.csv is the source of truth for the batch; wrapper_end's
+	* heartbeat reads rows with timestamp > last_update_check. No session
+	* global is needed (matches Python _read_usage_since / R read_pending_usage).
 	if ("`first_word'" != "stats") {
 		_rs_config get "`registream_dir'" "usage_logging"
 		if (r(value) == "true" | r(value) == "1") {
 			_rs_usage init "`registream_dir'"
-			_rs_usage log "`registream_dir'" "registream `command_line'" "`current_version'"
+			_rs_usage log "`registream_dir'" `"registream `command_line'"' "registream" "`current_version'" "`current_version'"
 		}
 	}
 
@@ -520,7 +657,15 @@ end
 
 * Wrapper end: Consolidated heartbeat (telemetry + update check) + notification
 program define _registream_wrapper_end
-	args current_version registream_dir command_line
+	gettoken current_version 0 : 0
+	gettoken registream_dir 0 : 0
+	gettoken command_line 0 : 0
+
+	* If `registream uninstall all` just removed core, the helper .ado
+	* files are gone from disk. Skip wrapper_end entirely — there is
+	* nothing to report and any _rs_config lookup would fail.
+	cap findfile _rs_config.ado
+	if _rc != 0 exit 0
 
 	* Get registream directory if not provided
 	if ("`registream_dir'" == "") {
@@ -550,12 +695,41 @@ program define _registream_wrapper_end
 		local should_heartbeat = 1
 	}
 
-	if (`should_heartbeat' == 1) {
-		* Consolidated heartbeat: telemetry + update check in one request
-		* Uses native Stata copy - ZERO shell commands, ZERO flashes
-		cap qui _rs_updates send_heartbeat "`registream_dir'" "`current_version'" "registream `command_line'"
+	* Detect which modules are installed so the meta-command heartbeat can
+	* ask the server about every module, not just the ones touched this
+	* session (parity with Python _installed_version / R installed_version).
+	local al_ver ""
+	local dm_ver ""
+	cap _rs_utils detect_installed_modules
+	if (_rc == 0) {
+		local al_ver "`r(autolabel_version)'"
+		local dm_ver "`r(datamirror_version)'"
 	}
 
-	* Show update notification if available
-	_rs_updates show_notification "`current_version'"
+	local core_update 0
+	local core_latest ""
+	local al_update 0
+	local al_latest ""
+	local dm_update 0
+	local dm_latest ""
+
+	if (`should_heartbeat' == 1) {
+		* Positional args: dir ver cmd module module_version al_ver dm_ver
+		cap qui _rs_updates send_heartbeat "`registream_dir'" "`current_version'" ///
+			`"registream `command_line'"' "" "" "`al_ver'" "`dm_ver'"
+		local core_update = r(update_available)
+		local core_latest "`r(latest_version)'"
+		local al_update = r(autolabel_update)
+		local al_latest "`r(autolabel_latest)'"
+		local dm_update = r(datamirror_update)
+		local dm_latest "`r(datamirror_latest)'"
+	}
+
+	* Show update notification if available; core scope includes all modules
+	* so `registream update` surfaces autolabel and datamirror updates too.
+	_rs_updates show_notification , ///
+		current_version("`current_version'") scope(core) ///
+		core_update(`core_update') core_latest("`core_latest'") ///
+		autolabel_update(`al_update') autolabel_latest("`al_latest'") ///
+		datamirror_update(`dm_update') datamirror_latest("`dm_latest'")
 end

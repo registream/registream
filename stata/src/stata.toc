@@ -1,8 +1,0 @@
-v 3
-d RegiStream: Streamline Your Register Data Workflow (Version {{VERSION}}, {{DATE}})
-d This package provides tools to label and manage register data,
-d with plans for expanding functionality to other domains and tasks.
-d Developed by Jeffrey Clark and Jie Wen
-d
-p registream A toolkit for managing and labeling register data, developed by Jeffrey Clark and Jie Wen
-l registream https://registream.org/stata [Visit the RegiStream website for more information]

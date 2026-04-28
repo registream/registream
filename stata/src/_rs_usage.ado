@@ -1,4 +1,3 @@
-cap program drop _rs_usage
 program define _rs_usage
 	version 16.0
 
@@ -38,17 +37,42 @@ program define _usage_init
 	* Check if usage file exists, create if not
 	local usage_file "`dir'/usage_stata.csv"
 
+	local _header "timestamp;user_id;platform;module;module_version;core_version;command_string;os;platform_version"
 	if (!fileexists("`usage_file'")) {
 		cap file close usagefile
-		file open usagefile using "`usage_file'", write replace
-		file write usagefile "timestamp;user_id;platform;version;command_string;os;platform_version" _n
+		quietly file open usagefile using "`usage_file'", write replace
+		file write usagefile "`_header'" _n
 		file close usagefile
+	}
+	else {
+		* Rotate old-schema log (pre-module-version) to .old if header differs
+		cap file close ufh
+		file open ufh using "`usage_file'", read
+		file read ufh firstline
+		file close ufh
+		if (`"`firstline'"' != `"`_header'"') {
+			cap erase "`usage_file'.old"
+			cap copy "`usage_file'" "`usage_file'.old"
+			cap file close usagefile
+			quietly file open usagefile using "`usage_file'", write replace
+			file write usagefile "`_header'" _n
+			file close usagefile
+		}
 	}
 end
 
 * Log a command usage (append to usage_stata.csv)
 program define _usage_log
-	args dir command_string version
+	* gettoken preserves inner quotes (e.g. scope("LISA" "Individer 16+"))
+	gettoken dir 0 : 0
+	gettoken command_string 0 : 0
+	gettoken module 0 : 0
+	gettoken module_version 0 : 0
+	gettoken core_version 0 : 0
+
+	* Escape stray quotes/semicolons/newlines so the CSV line stays well-formed
+	local command_string = subinstr(`"`command_string'"', ";", ",", .)
+	local command_string = subinstr(`"`command_string'"', `"""', "'", .)
 
 	* Check if local usage logging is enabled
 	_rs_config get "`dir'" "usage_logging"
@@ -91,8 +115,8 @@ program define _usage_log
 	cap file close usagefile
 	file open usagefile using "`usage_file'", write append
 
-	* Write CSV row with semicolon delimiter: timestamp;user_id;platform;version;command_string;os;platform_version
-	file write usagefile "`timestamp';`user_id';stata;`version';`command_string';`os';`platform_version'" _n
+	* Write CSV row: timestamp;user_id;platform;module;module_version;core_version;command_string;os;platform_version
+	file write usagefile "`timestamp';`user_id';stata;`module';`module_version';`core_version';`command_string';`os';`platform_version'" _n
 
 	file close usagefile
 
@@ -223,8 +247,13 @@ end
 * Mata functions for cryptographic hashing
 * ==============================================================================
 
+* Mata symbols persist across ado reloads (unlike programs), so drop before
+* redefining to support `registream update` reinstalling in-session.
+capture mata: mata drop _rs_generate_salt()
+capture mata: mata drop _rs_compute_secure_hash()
+capture mata: mata drop _rs_to_hex()
+
 mata:
-mata clear
 
 // Generate a random 64-character salt and save to file
 void _rs_generate_salt(string scalar filename)

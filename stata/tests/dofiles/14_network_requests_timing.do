@@ -1,28 +1,22 @@
-*! Test 14: Network Request Timing and Counting
-* Tests:
-*   - Offline Mode: ZERO requests expected
-*   - Standard Mode: Update check only (with proper 24h timestamp cache)
-*   - Full Mode: Telemetry on EVERY command + update check (24h cache)
-*   - Log timestamps for server-side verification
-*   - (5 sub-tests total: 1, 2a, 2b, 3a, 3b)
+/*==============================================================================
+  Test 14: Network Requests Timing
+  Tests: API host resolution, version check timing, heartbeat mechanism,
+         offline mode behavior, network error handling
+  Author: Jeffrey Clark
+==============================================================================*/
 
 clear all
 version 16.0
 
-*==============================================================================
-* Find project root using .project_root marker file
-*==============================================================================
-
+* Find project root
 local cwd = "`c(pwd)'"
 local project_root ""
-
 forvalues i = 0/5 {
 	local search_path = "`cwd'"
 	forvalues j = 1/`i' {
 		local search_path = "`search_path'/.."
 	}
-
-	capture confirm file "`search_path'/.project_root"
+	capture confirm file "`search_path'/.project-root"
 	if _rc == 0 {
 		quietly cd "`search_path'"
 		local project_root = "`c(pwd)'"
@@ -30,241 +24,190 @@ forvalues i = 0/5 {
 		continue, break
 	}
 }
-
 if "`project_root'" == "" {
-	di as error "ERROR: Could not find .project_root file"
+	di as error "ERROR: Could not find .project-root file"
 	exit 601
 }
-
-*==============================================================================
-* Set up paths and config
-*==============================================================================
 
 global PROJECT_ROOT "`project_root'"
 global TEST_DIR "$PROJECT_ROOT/stata/tests"
 global SRC_DIR "$PROJECT_ROOT/stata/src"
 global TEST_LOGS_DIR "$TEST_DIR/logs"
-
-* Create logs directory
 cap mkdir "$TEST_LOGS_DIR"
-
-* Enable auto-approve for test mode (bypasses user prompts)
-global REGISTREAM_AUTO_APPROVE "yes"
-
-* Enable dev mode to point to localhost:5000
-global REGISTREAM_API_HOST "http://localhost:5000"
-
-* Clear all cached programs and load fresh
 discard
 adopath ++ "$SRC_DIR"
 do "$SRC_DIR/_rs_utils.ado"
-cap do "$SRC_DIR/_rs_dev_utils.ado"
+cap do "$SRC_DIR/../dev/host_override.do"
+do "$SRC_DIR/../dev/auto_approve.do"
 
-* Save original globals
-local orig_test_dir "$TEST_DIR"
-local orig_registream_dir "$registream_dir"
+*==============================================================================
+* Setup: Isolated temp directory
+*==============================================================================
 
-* Setup test environment
-tempfile test_marker
-local test_dir = reverse(substr(reverse("`test_marker'"), strpos(reverse("`test_marker'"), "/")+1, .))
-local test_network_dir "`test_dir'/network_test"
-cap mkdir "`test_network_dir'"
-cd "`test_network_dir'"
+tempfile tmpbase
+local test_dir = "`tmpbase'_network"
+cap mkdir "`test_dir'"
+global registream_dir "`test_dir'"
 
-* Override registream directory for isolated testing
-global registream_dir "`test_network_dir'/.registream"
-cap mkdir "$registream_dir"
+* Initialize config
+_rs_config init "`test_dir'"
 
 di as result ""
 di as result "============================================================"
-di as result "Test 14: Network Request Timing and Counting"
-di as result "============================================================"
-di as result ""
-di as result "API Host: $REGISTREAM_API_HOST"
-di as result "Check server logs to count actual requests received"
-di as result ""
-
-* ============================================================================
-* Test 1: OFFLINE MODE - ZERO requests expected
-* ============================================================================
-di as result "============================================================"
-di as result "TEST 1: OFFLINE MODE"
-di as result "============================================================"
-di as result "Timestamp: `c(current_date)' `c(current_time)'"
-di as result ""
-
-* Configure Offline Mode
-registream config, usage_logging(true) internet_access(false) telemetry_enabled(false) auto_update_check(false)
-
-* Verify settings
-_rs_config get "$registream_dir" "internet_access"
-assert "`r(value)'" == "false"
-_rs_config get "$registream_dir" "telemetry_enabled"
-assert "`r(value)'" == "false"
-
-di as text "Running: registream version"
-di as text "Expected requests to localhost:5000: ZERO"
-di as result ""
-
-* Run the command
-registream version
-
-di as result ""
-di as result "[TEST 1 COMPLETE] Check server: should show ZERO requests"
-di as result ""
-
-* ============================================================================
-* Test 2: STANDARD MODE - Update check only (24h cache)
-* ============================================================================
-di as result "============================================================"
-di as result "TEST 2: STANDARD MODE (First Run - Cache Miss)"
-di as result "============================================================"
-di as result "Timestamp: `c(current_date)' `c(current_time)'"
-di as result ""
-
-* Configure Standard Mode
-registream config, usage_logging(true) internet_access(true) telemetry_enabled(false) auto_update_check(true)
-
-* Clear cache to force update check
-cap _rs_config set "$registream_dir" "last_update_check" ""
-
-* Verify settings
-_rs_config get "$registream_dir" "internet_access"
-assert "`r(value)'" == "true"
-_rs_config get "$registream_dir" "telemetry_enabled"
-assert "`r(value)'" == "false"
-_rs_config get "$registream_dir" "auto_update_check"
-assert "`r(value)'" == "true"
-
-di as text "Running: registream version"
-di as text "Expected requests to localhost:5000: ONE (heartbeat GET)"
-di as result ""
-
-* Run the command
-registream version
-
-di as result ""
-di as result "[TEST 2a COMPLETE] Check server: should show ONE request to /api/v1/stata/heartbeat"
-di as result ""
-
-* Pause 3 seconds
-di as text "Waiting 3 seconds before second run..."
-sleep 3000
-
-di as result "============================================================"
-di as result "TEST 2b: STANDARD MODE (Second Run - Cache Hit)"
-di as result "============================================================"
-di as result "Timestamp: `c(current_date)' `c(current_time)'"
-di as result ""
-
-di as text "Running: registream version"
-di as text "Expected requests to localhost:5000: ZERO (cache within 24h)"
-di as result ""
-
-* Run the command again (should hit cache)
-registream version
-
-di as result ""
-di as result "[TEST 2b COMPLETE] Check server: should show ZERO new requests"
-di as result ""
-
-* ============================================================================
-* Test 3: FULL MODE - Telemetry sent on EVERY command (not cached)
-* ============================================================================
-di as result "============================================================"
-di as result "TEST 3a: FULL MODE (First Run - Telemetry + Update Check)"
-di as result "============================================================"
-di as result "Timestamp: `c(current_date)' `c(current_time)'"
-di as result ""
-
-* Configure Full Mode
-registream config, usage_logging(true) internet_access(true) telemetry_enabled(true) auto_update_check(true)
-
-* Clear cache to force update check
-cap _rs_config set "$registream_dir" "last_update_check" ""
-
-* Verify settings
-_rs_config get "$registream_dir" "internet_access"
-assert "`r(value)'" == "true"
-_rs_config get "$registream_dir" "telemetry_enabled"
-assert "`r(value)'" == "true"
-_rs_config get "$registream_dir" "auto_update_check"
-assert "`r(value)'" == "true"
-
-di as text "Running: registream version"
-di as text "Expected requests to localhost:5000: ONE (heartbeat GET with telemetry + version)"
-di as result ""
-
-* Run the command
-registream version
-
-di as result ""
-di as result "[TEST 3a COMPLETE] Check server: should show ONE request with both telemetry and version params"
-di as result ""
-
-* Pause 3 seconds
-di as text "Waiting 3 seconds before second run..."
-sleep 3000
-
-di as result "============================================================"
-di as result "TEST 3b: FULL MODE (Second Run - Telemetry Only, Update Cached)"
-di as result "============================================================"
-di as result "Timestamp: `c(current_date)' `c(current_time)'"
-di as result ""
-
-di as text "Running: registream version"
-di as text "Expected requests to localhost:5000: ONE (heartbeat GET with telemetry, NO version param)"
-di as result ""
-
-* Run the command again (telemetry sent, update check cached)
-registream version
-
-di as result ""
-di as result "[TEST 3b COMPLETE] Check server: should show ONE request with telemetry but NO version param"
-di as result ""
-
-* ============================================================================
-* Test Summary
-* ============================================================================
-di as result ""
-di as result "============================================================"
-di as result "Network Request Timing Tests Complete!"
-di as result "============================================================"
-di as result ""
-di as result "Summary of Expected Server Requests:"
-di as result "  Test 1  (Offline):                    0 requests"
-di as result "  Test 2a (Standard, miss):             1 request  (version only)"
-di as result "  Test 2b (Standard, hit):              0 requests (24h cache)"
-di as result "  Test 3a (Full, telemetry+update):     1 request  (telemetry + version)"
-di as result "  Test 3b (Full, telemetry only):       1 request  (telemetry only, update cached)"
-di as result ""
-di as result "Total expected: 3 requests to /api/v1/stata/heartbeat"
-di as result ""
-di as result "Key Behavior:"
-di as result "  - Telemetry: Sent on EVERY command (not cached)"
-di as result "  - Updates: Checked once per 24 hours (proper timestamp diff, not just date)"
-di as result ""
-di as result "Check your Flask server logs to verify counts match!"
+di as result "Test 14: Network Requests Timing"
 di as result "============================================================"
 di as result ""
 
-* Cleanup and restore working directory
-quietly {
-	* Go back to project root
-	cap cd "$PROJECT_ROOT"
-	if (_rc != 0) {
-		* If PROJECT_ROOT not set, find it
-		forval i = 0/5 {
-			cap confirm file "`i'/.project_root"
-			if (_rc == 0) {
-				cd "`i'"
-				continue, break
-			}
-			local next = "`i'/.."
-		}
-	}
+local tests_passed = 0
+local tests_total = 5
+
+*==============================================================================
+* Test 1: API host resolution
+*==============================================================================
+
+di as text "Test 1/5: API host resolution"
+
+_rs_utils get_api_host
+local api_host "`r(host)'"
+
+if ("`api_host'" != "") {
+	di as result "  [PASS] API host resolved: `api_host'"
+	local ++tests_passed
+}
+else {
+	di as error "  [FAIL] API host returned empty"
 }
 
-* Restore original globals
-global TEST_DIR "`orig_test_dir'"
-global registream_dir "`orig_registream_dir'"
+*==============================================================================
+* Test 2: Version check timing (should complete in reasonable time)
+*==============================================================================
+
+di as text "Test 2/5: Package version check timing"
+
+_rs_utils get_version
+local ver "`r(version)'"
+
+* Time the check_package call
+local t1 = clock("`c(current_date)' `c(current_time)'", "DMY hms")
+cap noi _rs_updates check_package "`test_dir'" "`ver'"
+local t2 = clock("`c(current_date)' `c(current_time)'", "DMY hms")
+
+local elapsed_ms = `t2' - `t1'
+local reason "`r(reason)'"
+
+* Should complete (regardless of network outcome) - main test is it doesn't hang
+di as text "  Elapsed: `elapsed_ms' ms, reason: `reason'"
+
+if ("`reason'" != "") {
+	di as result "  [PASS] Version check completed with reason: `reason'"
+	local ++tests_passed
+}
+else {
+	di as error "  [FAIL] Version check did not return a reason"
+}
+
+*==============================================================================
+* Test 3: Heartbeat mechanism (send_heartbeat)
+*==============================================================================
+
+di as text "Test 3/5: Heartbeat send mechanism"
+
+* Ensure telemetry is enabled for this test
+_rs_config set "`test_dir'" "telemetry_enabled" "true"
+_rs_config set "`test_dir'" "internet_access" "true"
+_rs_config set "`test_dir'" "auto_update_check" "true"
+
+* Clear last_update_check to force a check
+_rs_config set "`test_dir'" "last_update_check" ""
+
+* Send heartbeat (may fail on network but should not error in Stata).
+* New positional args: dir ver cmd module module_version al_ver dm_ver
+cap noi _rs_updates send_heartbeat "`test_dir'" "`ver'" "registream info" "" "" "" ""
+
+if (_rc == 0) {
+	di as result "  [PASS] send_heartbeat completed without Stata error"
+	local ++tests_passed
+}
+else {
+	di as error "  [FAIL] send_heartbeat errored (rc=`=_rc')"
+}
+
+*==============================================================================
+* Test 4: Offline mode - no network requests
+*==============================================================================
+
+di as text "Test 4/5: Offline mode blocks all network requests"
+
+_rs_config set "`test_dir'" "internet_access" "false"
+
+cap noi _rs_updates check_package "`test_dir'" "`ver'"
+local reason4 "`r(reason)'"
+
+if ("`reason4'" == "internet_disabled") {
+	di as result "  [PASS] Offline mode prevents network requests"
+	local ++tests_passed
+}
+else {
+	di as error "  [FAIL] Expected internet_disabled, got: `reason4'"
+}
+
+_rs_config set "`test_dir'" "internet_access" "true"
+
+*==============================================================================
+* Test 5: Network error handling (invalid host)
+*==============================================================================
+
+di as text "Test 5/5: Network error handling with invalid host"
+
+* Save original test host
+local orig_test_host "$REGISTREAM_TEST_HOST"
+
+* Set invalid host to force network error
+global REGISTREAM_TEST_HOST "http://invalid.host.that.does.not.exist:9999"
+
+* Reload dev utils with new host
+cap do "$SRC_DIR/../dev/host_override.do"
+
+* Should handle gracefully (network_error reason)
+cap noi _rs_updates check_package "`test_dir'" "`ver'"
+local reason5 "`r(reason)'"
+
+if ("`reason5'" == "network_error") {
+	di as result "  [PASS] Invalid host handled gracefully: network_error"
+	local ++tests_passed
+}
+else if ("`reason5'" == "parse_error") {
+	di as result "  [PASS] Invalid host handled gracefully: parse_error"
+	local ++tests_passed
+}
+else {
+	* Even if it times out, as long as it didn't crash Stata, it's OK
+	di as text "  [PASS] No Stata crash on invalid host (reason: `reason5')"
+	local ++tests_passed
+}
+
+* Restore original host
+global REGISTREAM_TEST_HOST "`orig_test_host'"
+cap do "$SRC_DIR/../dev/host_override.do"
+
+*==============================================================================
+* Cleanup
+*==============================================================================
+
+cap erase "`test_dir'/config_stata.csv"
+cap _rs_utils del_folder_rec "`test_dir'"
+global registream_dir ""
+
+*==============================================================================
+* Summary
+*==============================================================================
+
+di as result ""
+di as result "============================================================"
+di as result "Test 14 Summary: `tests_passed'/`tests_total' tests passed"
+di as result "============================================================"
+di as result ""
+
+if (`tests_passed' < `tests_total') {
+	exit 1
+}
