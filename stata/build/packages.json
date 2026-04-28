@@ -26,7 +26,8 @@
         ],
         "description": "Automatic variable and value labeling from metadata",
         "authors": "Jeffrey Clark, Jie Wen",
-        "requires": "registream"
+        "requires": "registream",
+        "min_core_version": "3.0.0"
     },
     "datamirror": {
         "version": "1.0.0",
@@ -40,6 +41,7 @@
         ],
         "description": "Checkpoint-constrained synthetic data generation",
         "authors": "Jeffrey Clark",
-        "requires": "registream"
+        "requires": "registream",
+        "min_core_version": "3.0.0"
     }
 }

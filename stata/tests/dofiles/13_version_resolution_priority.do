@@ -163,8 +163,10 @@ else {
 
 di as text "Test 5/6: _rs_check_core_version validates minimum requirements"
 
-* Should pass - require version 1.0.0 (current or lower)
-cap _rs_check_core_version "1.0.0"
+* Phase 3 of version_coordination.md changed signature to
+* (module_name, min_version). Should pass — require version 1.0.0
+* (current dev override is 2.0.0, well above the floor).
+cap _rs_check_core_version "autolabel" "1.0.0"
 if (_rc == 0) {
 	di as result "  [PASS] Core version check passes for 1.0.0 requirement"
 	local ++tests_passed

@@ -241,7 +241,7 @@ else {
 
 * Test 11: Timestamp Cache Logic
 di as result "============================================================"
-di as result "Test 11/12: Timestamp Cache Logic"
+di as result "Test 11/13: Timestamp Cache Logic"
 di as result "============================================================"
 local ++tests_total
 cap noi do "$TEST_DIR/dofiles/15_timestamp_cache_test.do"
@@ -254,12 +254,12 @@ else {
 	di as error "[FAIL] Test 11 (rc=`=_rc')"
 }
 
-* Test 12: Cleanup
+* Test 12: _rs_check_core_version (Phase 3 of version_coordination.md)
 di as result "============================================================"
-di as result "Test 12/12: Clean State Restoration"
+di as result "Test 12/13: _rs_check_core_version"
 di as result "============================================================"
 local ++tests_total
-cap noi do "$TEST_DIR/dofiles/99_cleanup.do"
+cap noi do "$TEST_DIR/dofiles/16_check_core_version.do"
 if (_rc == 0) {
 	local ++tests_passed
 	di as result "[PASS] Test 12"
@@ -267,6 +267,21 @@ if (_rc == 0) {
 else {
 	local ++tests_failed
 	di as error "[FAIL] Test 12 (rc=`=_rc')"
+}
+
+* Test 13: Cleanup
+di as result "============================================================"
+di as result "Test 13/13: Clean State Restoration"
+di as result "============================================================"
+local ++tests_total
+cap noi do "$TEST_DIR/dofiles/99_cleanup.do"
+if (_rc == 0) {
+	local ++tests_passed
+	di as result "[PASS] Test 13"
+}
+else {
+	local ++tests_failed
+	di as error "[FAIL] Test 13 (rc=`=_rc')"
 }
 
 *==============================================================================

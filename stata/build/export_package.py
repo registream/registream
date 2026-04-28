@@ -61,17 +61,79 @@ except Exception as _e:
     _CONTRIBUTORS_DATA = {}
     print(f"  WARNING: citations.yaml unavailable ({_e!r}); {{CITATION_*}} placeholders will not be substituted")
 
-# Default output: registream.org server directory (versioned folder, resolved by server)
-_STATA_BASE = REPO_ROOT.parent / "registream.org" / "data" / "registream" / "stata"
-HEARTBEAT_MANIFEST = REPO_ROOT.parent / "registream.org" / "data" / "registream" / "package_versions.json"
-CHANGELOG_OUTPUT = REPO_ROOT.parent / "registream.org" / "data" / "registream" / "changelog.json"
+# Default output: registream-website data directory.
+# Per-package layout (Phase 5 of version_coordination.md):
+#   <_STATA_BASE>/<pkg>/<version>/{stata.toc, <pkg>.pkg, ...}
+# This is a flip from the legacy merged layout (<_STATA_BASE>/<version>/...).
+_STATA_BASE = REPO_ROOT.parent / "registream-website" / "data" / "registream" / "stata"
+CHANGELOG_OUTPUT = REPO_ROOT.parent / "registream-website" / "data" / "registream" / "changelog.json"
 
 
 def load_packages():
-    """Load package definitions from packages.json"""
+    """Load package definitions from packages.json, then override version
+    fields from the canonical package_manifest.yaml.
+
+    packages.json provides static metadata that doesn't change between
+    releases (source path, file list, description, authors). The manifest
+    YAML in the website repo provides the per-release values (version,
+    release_date, min_core_version) so a single edit there flows through
+    to both build artifacts and the heartbeat resolver.
+
+    See registream-docs/architecture/version_coordination.md (Phase 5).
+    """
     packages_file = BUILD_DIR / "packages.json"
     with open(packages_file) as f:
-        return json.load(f)
+        packages = json.load(f)
+
+    sync_from_manifest(packages)
+    return packages
+
+
+def sync_from_manifest(packages):
+    """In-place override of version/release_date/min_core_version from
+    package_manifest.yaml. No-op if the manifest is unreachable, so this
+    stays safe in environments where the website repo isn't checked out
+    next to the registream repo.
+    """
+    manifest_path = (
+        REPO_ROOT.parent
+        / "registream-website"
+        / "data"
+        / "registream"
+        / "package_manifest.yaml"
+    )
+    if not manifest_path.exists():
+        print(f"  WARNING: manifest not found at {manifest_path}; using packages.json values as-is")
+        return
+
+    try:
+        import yaml as _yaml
+        with open(manifest_path) as f:
+            manifest = _yaml.safe_load(f) or {}
+    except Exception as e:
+        print(f"  WARNING: failed to parse manifest ({e!r}); using packages.json values as-is")
+        return
+
+    for pkg_name, pkg_config in packages.items():
+        m_pkg = manifest.get("packages", {}).get(pkg_name)
+        if not m_pkg:
+            continue
+        latest = m_pkg.get("latest")
+        if not latest:
+            continue
+        latest_info = m_pkg.get("versions", {}).get(latest, {}) or {}
+
+        # Version + release date
+        pkg_config["version"] = latest
+        if latest_info.get("released"):
+            pkg_config["release_date"] = latest_info["released"]
+
+        # min_core_version comes from the registream constraint
+        # (e.g., ">=3.0.1" → "3.0.1"). Only modules have this.
+        constraint = (latest_info.get("requires") or {}).get("registream")
+        if constraint and constraint.startswith(">="):
+            floor = constraint[2:].strip().split(",")[0].strip()
+            pkg_config["min_core_version"] = floor
 
 
 def sthlp_date(release_date_str):
@@ -80,13 +142,14 @@ def sthlp_date(release_date_str):
     return dt.strftime("%d%b%Y").lower()
 
 
-def stamp_file(filepath, version, release_date):
+def stamp_file(filepath, version, release_date, min_core_version=""):
     """Replace placeholders in a file.
 
     Substitutes in order:
       1. {{CITATION_<WORK>_<VARIANT>}}  — citation text from citations.yaml
          (may itself contain {{VERSION}} which is resolved in step 2)
       2. {{VERSION}}, {{DATE}}, {{STHLP_DATE}}  — per-package stamps
+      3. {{MIN_CORE}}  — min registream-core version (modules only; "" for core)
     """
     with open(filepath, "r", encoding="utf-8") as f:
         content = f.read()
@@ -108,6 +171,11 @@ def stamp_file(filepath, version, release_date):
     content = content.replace("{{VERSION}}", version)
     content = content.replace("{{DATE}}", release_date)
     content = content.replace("{{STHLP_DATE}}", sthlp_date(release_date))
+
+    # 4. Min-core constraint (Phase 4 of version_coordination.md). Modules
+    # bake this constant into their .ado so the runtime _rs_check_core_version
+    # call has a value even when the manifest is unreachable.
+    content = content.replace("{{MIN_CORE}}", min_core_version)
 
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(content)
@@ -147,7 +215,13 @@ def generate_pkg(pkg_name, pkg_config, all_files, output_dir):
 
     requires = pkg_config.get("requires")
     if requires:
-        lines.append(f"d Requires: {requires} (install separately)")
+        # SSC convention: human-readable Requires: line (Stata doesn't
+        # enforce). Includes min-version constraint when known.
+        min_core = pkg_config.get("min_core_version")
+        if min_core:
+            lines.append(f"d Requires: {requires} (>={min_core}, install separately)")
+        else:
+            lines.append(f"d Requires: {requires} (install separately)")
 
     lines.extend([
         "d",
@@ -169,25 +243,22 @@ def generate_pkg(pkg_name, pkg_config, all_files, output_dir):
     print(f"  Generated {pkg_name}.pkg ({len(seen)} files)")
 
 
-def generate_toc(packages, output_dir):
-    """Generate stata.toc listing all packages"""
+def generate_toc(pkg_name, pkg_config, output_dir):
+    """Generate a single-package stata.toc inside the package's own folder.
+
+    Phase 5 of version_coordination.md: each <pkg>/<version>/ folder is a
+    self-contained `net install` endpoint with one `p` line, not a merged
+    multi-package toc.
+    """
+    desc = pkg_config["description"]
+    version = pkg_config["version"]
     lines = [
         "v 3",
-        "d RegiStream: Research Data Infrastructure for Register Data",
-        "d Developed by Jeffrey Clark and Jie Wen",
+        f"d {pkg_name}: {desc}",
+        "d Distributed by RegiStream at https://registream.org",
         "d",
+        f"p {pkg_name} {desc} (v{version})",
     ]
-
-    for pkg_name, pkg_config in packages.items():
-        # Check if source directory exists (skip packages not yet set up)
-        source_dir = (BUILD_DIR / pkg_config["source"]).resolve()
-        if not source_dir.exists():
-            print(f"  Skipping {pkg_name} in stata.toc (source not found: {source_dir})")
-            continue
-
-        version = pkg_config["version"]
-        desc = pkg_config["description"]
-        lines.append(f"p {pkg_name} {desc} (v{version})")
 
     toc_path = output_dir / "stata.toc"
     with open(toc_path, "w") as f:
@@ -196,10 +267,16 @@ def generate_toc(packages, output_dir):
     print(f"  Generated stata.toc")
 
 
-def build_package(pkg_name, packages, output_dir):
-    """Build a single package: resolve files, copy, stamp, generate .pkg"""
+def build_package(pkg_name, packages, output_base):
+    """Build a single package into output_base/<pkg>/<version>/.
+
+    Phase 5 layout: per-package, per-version. Each folder is a complete
+    `net install` endpoint (its own stata.toc + <pkg>.pkg + files).
+    """
     pkg_config = packages[pkg_name]
     source_dir = (BUILD_DIR / pkg_config["source"]).resolve()
+    output_dir = output_base / pkg_name / pkg_config["version"]
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     if not source_dir.exists():
         print(f"  ERROR: Source directory not found: {source_dir}")
@@ -209,6 +286,10 @@ def build_package(pkg_name, packages, output_dir):
 
     # Resolve all files (own + bundled/required)
     all_files = resolve_pkg_files(pkg_name, packages)
+
+    # Min-core constraint (Phase 4). Modules carry it for runtime check;
+    # core itself has no min_core_version (it IS core).
+    min_core = pkg_config.get("min_core_version", "")
 
     # Copy and stamp each file
     seen = set()
@@ -226,16 +307,38 @@ def build_package(pkg_name, packages, output_dir):
 
         shutil.copy2(src, dst)
 
-        # Stamp text files with their own package's version
+        # Stamp text files with their own package's version + min-core
         if filename.endswith((".ado", ".sthlp")):
-            stamp_file(dst, version, release_date)
+            stamp_file(dst, version, release_date, min_core)
 
         print(f"  Copied {filename}")
 
-    # Generate .pkg file
+    # Generate .pkg + single-package stata.toc inside this package's folder
     generate_pkg(pkg_name, pkg_config, all_files, output_dir)
+    generate_toc(pkg_name, pkg_config, output_dir)
+
+    # Per-package zip for offline / secure-env install (Phase 5).
+    # Convention matches legacy: top-level folder <pkg>_<ver>-stata/.
+    # Lives in the stata/ root so /get_zip/stata/<pkg>/<ver> can serve it.
+    generate_zip(pkg_name, pkg_config, output_dir, output_base)
 
     return True
+
+
+def generate_zip(pkg_name, pkg_config, src_dir, output_base):
+    """Zip the contents of src_dir into <output_base>/<pkg>_<ver>-stata.zip
+    with top-level folder <pkg>_<ver>-stata/ (matches legacy zip layout)."""
+    import zipfile
+    version = pkg_config["version"]
+    zip_name = f"{pkg_name}_{version}-stata"
+    zip_path = output_base / f"{zip_name}.zip"
+    if zip_path.exists():
+        zip_path.unlink()
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(src_dir.iterdir()):
+            if f.is_file():
+                zf.write(f, arcname=f"{zip_name}/{f.name}")
+    print(f"  Generated {zip_path.name}")
 
 
 def parse_changelog(changelog_path):
@@ -317,19 +420,6 @@ def generate_changelog(packages):
     print(f"  Generated {CHANGELOG_OUTPUT.name}")
 
 
-def update_heartbeat_manifest(packages):
-    """Update package_versions.json for the heartbeat endpoint"""
-    manifest = {}
-    for pkg_name, pkg_config in packages.items():
-        manifest[pkg_name] = pkg_config["version"]
-
-    with open(HEARTBEAT_MANIFEST, "w") as f:
-        json.dump(manifest, f, indent=4)
-        f.write("\n")
-
-    print(f"\n  Updated {HEARTBEAT_MANIFEST.name}")
-
-
 def tag_repo(pkg_name, pkg_config):
     """Create a git tag in the package's source repo"""
     source_dir = (BUILD_DIR / pkg_config["source"]).resolve()
@@ -365,7 +455,8 @@ def main():
     parser.add_argument("--all", action="store_true", help="Build all packages")
     parser.add_argument("--tag", action="store_true", help="Create git tag after build")
     parser.add_argument("--output", type=Path, default=None,
-                        help="Output directory (default: registream.org server, versioned)")
+                        help="Output base directory (default: registream-website data dir). "
+                             "Per-package layout writes <output>/<pkg>/<version>/.")
     args = parser.parse_args()
 
     if not args.package and not args.all:
@@ -374,14 +465,12 @@ def main():
 
     packages = load_packages()
 
-    # Resolve output directory: use core version as folder name
+    # Output base; per-package subdirs (<pkg>/<version>/) are made by build_package.
     if args.output is None:
-        core_version = packages.get("registream", {}).get("version", "latest")
-        args.output = _STATA_BASE / core_version
+        args.output = _STATA_BASE
     args.output.mkdir(parents=True, exist_ok=True)
 
     if args.all:
-        # Build all packages
         for pkg_name in packages:
             build_package(pkg_name, packages, args.output)
             if args.tag:
@@ -396,19 +485,18 @@ def main():
         if args.tag:
             tag_repo(args.package, packages[args.package])
 
-    # Always regenerate stata.toc, heartbeat manifest, and changelog
-    generate_toc(packages, args.output)
-    update_heartbeat_manifest(packages)
+    # Changelog is derived from each module's CHANGELOG.md and powers the
+    # website's /changelog page. Version metadata flows directly from
+    # package_manifest.yaml — no separate JSON heartbeat manifest needed.
     generate_changelog(packages)
 
-    print(f"\nBuild complete. Output: {args.output}")
-    print(f"\nInstall commands:")
-    print(f'  net install registream, from("https://registream.org/install/stata") replace')
-    print(f"    → core only (prerequisite for modules)")
-    print(f'  net install autolabel,  from("https://registream.org/install/stata") replace')
-    print(f"  net install datamirror, from("
-          f'"https://registream.org/install/stata") replace')
-    print(f"    → modules (install registream first)")
+    print(f"\nBuild complete. Output base: {args.output}")
+    print(f"\nInstall commands (per-package URLs — Phase 2 of version_coordination.md):")
+    print(f'  net install registream, from("https://registream.org/install/stata/registream/latest") replace')
+    print(f'  net install autolabel,  from("https://registream.org/install/stata/autolabel/latest") replace')
+    print(f'  net install datamirror, from("https://registream.org/install/stata/datamirror/latest") replace')
+
+    print(f"\nReleasing: rsync the per-package folders under {args.output} to the server's data/registream/stata/.")
 
 
 if __name__ == "__main__":

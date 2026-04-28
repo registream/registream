@@ -482,23 +482,68 @@ program define _utils_get_filesize, rclass
 end
 
 * -----------------------------------------------------------------------------
-* _rs_get_core_version: Return the hardcoded core version string
-* Returns r(version) with the core package version
+* _rs_get_core_version: Read the installed core version from registream.ado.
+*
+* Returns r(version) by parsing the `*! version X.Y.Z YYYY-MM-DD` header
+* of registream.ado on the adopath. Returns r(version) = "" if the file
+* is unreachable or unreadable (caller should treat that as core-missing).
+*
+* Pattern matches _utils_detect_modules — single source of truth for how
+* a Stata package's installed version is read.
 * -----------------------------------------------------------------------------
 program define _rs_get_core_version, rclass
-	return local version "1.0.0"
+	return local version ""
+
+	* Dev override first (honors $REGISTREAM_TEST_VERSION when
+	* stata/dev/version_override.do has been sourced).
+	cap qui _rs_dev_utils get_version
+	if (_rc == 0 & "`r(version)'" != "") {
+		return local version "`r(version)'"
+		exit 0
+	}
+
+	cap qui findfile registream.ado
+	if (_rc != 0) exit 0
+
+	local path "`r(fn)'"
+	tempname fh
+	cap file open `fh' using "`path'", read text
+	if (_rc != 0) exit 0
+
+	file read `fh' firstline
+	file close `fh'
+	if (regexm(`"`firstline'"', "^\*! version ([0-9][^ ]*)")) {
+		return local version = regexs(1)
+	}
 end
 
 * -----------------------------------------------------------------------------
-* _rs_check_core_version: Verify core is new enough for a calling module
-* Takes one argument: the minimum required version string (e.g., "1.0.0")
-* Returns r(core_version) on success, or exits 198 with upgrade instructions
+* _rs_check_core_version: Verify core is new enough for a calling module.
+*
+* Args (positional):
+*   1. module_name  — caller's module name, used in the error message
+*                     (e.g., "autolabel", "datamirror")
+*   2. min_version  — minimum required core version (e.g., "3.0.1")
+*
+* Returns r(core_version) on success. On failure exits 198 with a clear
+* upgrade-instruction banner. If core is missing entirely, the caller's
+* `findfile _rs_utils.ado` check should have caught it first; this
+* function still degrades gracefully (treats unreadable as too-old).
+*
+* See registream-docs/architecture/version_coordination.md for the
+* cross-client design.
 * -----------------------------------------------------------------------------
 program define _rs_check_core_version, rclass
-	args required_version
+	args module_name required_version
 
-	* Get the current core version
-	local core_version "1.0.0"
+	if ("`module_name'" == "" | "`required_version'" == "") {
+		di as error "_rs_check_core_version requires (module_name, min_version)"
+		exit 198
+	}
+
+	* Read the installed core version from registream.ado's header.
+	_rs_get_core_version
+	local core_version "`r(version)'"
 
 	* --- Parse core version into major.minor.patch ---
 	local work "`core_version'"
@@ -515,6 +560,11 @@ program define _rs_check_core_version, rclass
 	gettoken req_minor work : work, parse(".")
 	gettoken dot work : work, parse(".")
 	local req_patch "`work'"
+
+	* Treat empty/garbage core_version as too-old (zeros lose every compare).
+	if ("`core_major'" == "") local core_major 0
+	if ("`core_minor'" == "") local core_minor 0
+	if ("`core_patch'" == "") local core_patch 0
 
 	* --- Compare versions ---
 	local too_old 0
@@ -533,11 +583,15 @@ program define _rs_check_core_version, rclass
 	}
 
 	if (`too_old') {
-		di as error "This module requires registream core version `required_version' or later."
-		di as error "You have version `core_version'."
+		di as error "`module_name' requires registream core >= `required_version'."
+		if ("`core_version'" != "") {
+			di as error "You have core version `core_version'."
+		}
+		else {
+			di as error "Core is not installed (or its version header is unreadable)."
+		}
 		di as error `"Run:  cap ado uninstall registream"'
-		di as error `"      net install registream, from("https://registream.org/install/stata/latest") replace"'
-		di as error `" or:  ssc install registream, replace"'
+		di as error `"      net install registream, from("https://registream.org/install/stata/registream/latest") replace"'
 		exit 198
 	}
 
