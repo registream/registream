@@ -1,5 +1,5 @@
 /*==============================================================================
-  Test 16: _rs_check_core_version — runtime min-core check used by modules
+  Test 16: _rs_utils check_core_version — runtime min-core check used by modules
   to refuse to load against an incompatible core. See
   registream-docs/architecture/version_coordination.md (Phase 3).
 
@@ -52,7 +52,7 @@ do "$SRC_DIR/../dev/auto_approve.do"
 
 di as result ""
 di as result "============================================================"
-di as result "Test 16: _rs_check_core_version"
+di as result "Test 16: _rs_utils check_core_version"
 di as result "============================================================"
 di as result ""
 
@@ -68,7 +68,7 @@ di as text "Test 1/5: pass when core_version == required"
 global REGISTREAM_TEST_VERSION "3.0.1"
 do "$SRC_DIR/../dev/version_override.do"
 
-cap _rs_check_core_version "autolabel" "3.0.1"
+cap _rs_utils check_core_version "autolabel" "3.0.1"
 if (_rc == 0) {
 	di as result "  [PASS] check passed (rc=0)"
 	local ++tests_passed
@@ -86,7 +86,7 @@ di as text "Test 2/5: pass when core_version > required"
 global REGISTREAM_TEST_VERSION "3.0.5"
 do "$SRC_DIR/../dev/version_override.do"
 
-cap _rs_check_core_version "datamirror" "3.0.1"
+cap _rs_utils check_core_version "datamirror" "3.0.1"
 if (_rc == 0) {
 	di as result "  [PASS] check passed (rc=0)"
 	local ++tests_passed
@@ -104,7 +104,7 @@ di as text "Test 3/5: fail with rc=198 when core_version < required"
 global REGISTREAM_TEST_VERSION "3.0.0"
 do "$SRC_DIR/../dev/version_override.do"
 
-cap _rs_check_core_version "autolabel" "3.0.1"
+cap _rs_utils check_core_version "autolabel" "3.0.1"
 if (_rc == 198) {
 	di as result "  [PASS] check failed with rc=198"
 	local ++tests_passed
@@ -126,7 +126,7 @@ do "$SRC_DIR/../dev/version_override.do"
 tempfile errlog
 cap log close _all
 log using "`errlog'", text replace
-cap noisily _rs_check_core_version "datamirror" "3.0.1"
+cap noisily _rs_utils check_core_version "datamirror" "3.0.1"
 log close
 
 local logfile "`errlog'.log"
@@ -163,9 +163,9 @@ else {
 
 di as text "Test 5/5: reject empty (module_name, min_version)"
 
-cap _rs_check_core_version "" "3.0.1"
+cap _rs_utils check_core_version "" "3.0.1"
 local rc1 = _rc
-cap _rs_check_core_version "autolabel" ""
+cap _rs_utils check_core_version "autolabel" ""
 local rc2 = _rc
 
 if (`rc1' == 198 & `rc2' == 198) {

@@ -142,7 +142,7 @@ else {
 
 di as text "Test 4/6: _rs_get_core_version returns hardcoded version"
 
-cap _rs_get_core_version
+cap _rs_utils get_core_version
 if (_rc == 0) {
 	local core_ver "`r(version)'"
 	if ("`core_ver'" != "") {
@@ -166,7 +166,7 @@ di as text "Test 5/6: _rs_check_core_version validates minimum requirements"
 * Phase 3 of version_coordination.md changed signature to
 * (module_name, min_version). Should pass — require version 1.0.0
 * (current dev override is 2.0.0, well above the floor).
-cap _rs_check_core_version "autolabel" "1.0.0"
+cap _rs_utils check_core_version "autolabel" "1.0.0"
 if (_rc == 0) {
 	di as result "  [PASS] Core version check passes for 1.0.0 requirement"
 	local ++tests_passed

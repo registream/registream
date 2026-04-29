@@ -59,6 +59,14 @@ program define _rs_utils, rclass
 		_utils_detect_trk_packages `0'
 		return add
 	}
+	else if ("`subcmd'" == "get_core_version") {
+		_utils_get_core_version `0'
+		return add
+	}
+	else if ("`subcmd'" == "check_core_version") {
+		_utils_check_core_version `0'
+		return add
+	}
 	else {
 		di as error "Invalid _rs_utils subcommand: `subcmd'"
 		exit 198
@@ -482,7 +490,12 @@ program define _utils_get_filesize, rclass
 end
 
 * -----------------------------------------------------------------------------
-* _rs_get_core_version: Read the installed core version from registream.ado.
+* get_core_version: Read the installed core version from registream.ado.
+*
+* Public surface: `_rs_utils get_core_version` (callers must route through
+* the dispatcher because Stata's autoloader only registers the program that
+* matches the filename — nested programs aren't directly autoloadable from
+* outside the file).
 *
 * Returns r(version) by parsing the `*! version X.Y.Z YYYY-MM-DD` header
 * of registream.ado on the adopath. Returns r(version) = "" if the file
@@ -491,7 +504,7 @@ end
 * Pattern matches _utils_detect_modules — single source of truth for how
 * a Stata package's installed version is read.
 * -----------------------------------------------------------------------------
-program define _rs_get_core_version, rclass
+program define _utils_get_core_version, rclass
 	return local version ""
 
 	* Dev override first (honors $REGISTREAM_TEST_VERSION when
@@ -518,7 +531,10 @@ program define _rs_get_core_version, rclass
 end
 
 * -----------------------------------------------------------------------------
-* _rs_check_core_version: Verify core is new enough for a calling module.
+* check_core_version: Verify core is new enough for a calling module.
+*
+* Public surface: `_rs_utils check_core_version "<module>" "<min_version>"`.
+* Callers must route through the dispatcher (see get_core_version note).
 *
 * Args (positional):
 *   1. module_name  — caller's module name, used in the error message
@@ -533,16 +549,16 @@ end
 * See registream-docs/architecture/version_coordination.md for the
 * cross-client design.
 * -----------------------------------------------------------------------------
-program define _rs_check_core_version, rclass
+program define _utils_check_core_version, rclass
 	args module_name required_version
 
 	if ("`module_name'" == "" | "`required_version'" == "") {
-		di as error "_rs_check_core_version requires (module_name, min_version)"
+		di as error "_rs_utils check_core_version requires (module_name, min_version)"
 		exit 198
 	}
 
 	* Read the installed core version from registream.ado's header.
-	_rs_get_core_version
+	_utils_get_core_version
 	local core_version "`r(version)'"
 
 	* --- Parse core version into major.minor.patch ---
