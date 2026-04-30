@@ -9,7 +9,7 @@
 *   registream version
 *   registream cite
 
-program define registream
+program define registream, rclass
 	version 16.0
 
 	* Get version from helper function (can be overridden by stata/dev/version_override.do)
@@ -29,36 +29,57 @@ program define registream
 	if ("`subcmd'" == "update") {
 		_registream_update `rest'
 		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" `"`0'"'
+		return local version "`REGISTREAM_VERSION'"
+		return local dir "`registream_dir'"
+		return scalar status = 0
 		exit 0
 	}
 	else if ("`subcmd'" == "info") {
 		_registream_info `rest'
 		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" `"`0'"'
+		return local version "`REGISTREAM_VERSION'"
+		return local dir "`registream_dir'"
+		return scalar status = 0
 		exit 0
 	}
 	else if ("`subcmd'" == "config") {
 		_registream_config `rest'
 		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" `"`0'"'
+		return local version "`REGISTREAM_VERSION'"
+		return local dir "`registream_dir'"
+		return scalar status = 0
 		exit 0
 	}
 	else if ("`subcmd'" == "version") {
 		_registream_version `rest'
 		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" `"`0'"'
+		return local version "`REGISTREAM_VERSION'"
+		return local dir "`registream_dir'"
+		return scalar status = 0
 		exit 0
 	}
 	else if ("`subcmd'" == "cite") {
 		_registream_cite `rest'
 		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" `"`0'"'
+		return local version "`REGISTREAM_VERSION'"
+		return local dir "`registream_dir'"
+		return scalar status = 0
 		exit 0
 	}
 	else if ("`subcmd'" == "stats") {
 		_registream_stats `rest'
 		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" `"`0'"'
+		return local version "`REGISTREAM_VERSION'"
+		return local dir "`registream_dir'"
+		return scalar status = 0
 		exit 0
 	}
 	else if ("`subcmd'" == "uninstall") {
 		_registream_uninstall `rest'
 		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" `"`0'"'
+		return local version "`REGISTREAM_VERSION'"
+		return local dir "`registream_dir'"
+		return scalar status = 0
 		exit 0
 	}
 	else if ("`subcmd'" == "") {
@@ -76,6 +97,7 @@ program define registream
 		di as text ""
 		di as text "See {help registream:help registream} for details"
 		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" `"`0'"'
+		return scalar status = 1
 		exit 198
 	}
 	else {
@@ -83,6 +105,7 @@ program define registream
 		di as text "Available: update, info, config, version, cite, stats, uninstall"
 		di as text "See {help registream:help registream} for details"
 		_registream_wrapper_end "`REGISTREAM_VERSION'" "`registream_dir'" `"`0'"'
+		return scalar status = 1
 		exit 198
 	}
 end

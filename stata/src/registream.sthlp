@@ -7,6 +7,7 @@
 {viewerjumpto "Commands" "registream##commands"}{...}
 {viewerjumpto "Configuration" "registream##config"}{...}
 {viewerjumpto "Examples" "registream##examples"}{...}
+{viewerjumpto "Stored results" "registream##results"}{...}
 {viewerjumpto "Privacy" "registream##privacy"}{...}
 {viewerjumpto "Authors" "registream##authors"}{...}
 {viewerjumpto "Citing RegiStream" "registream##citation"}{...}
@@ -396,6 +397,23 @@ To use a custom directory, set before first run:
 {phang2}
 {cmd:. registream cite} {it:(show citation for publications)}
 {p_end}
+
+
+{marker results}{...}
+{title:Stored results}
+
+{pstd}
+{cmd:registream} stores the following in {cmd:r()}:
+{p_end}
+
+{synoptset 20 tabbed}{...}
+{p2col 5 20 24 2: Scalars}{p_end}
+{synopt:{cmd:r(status)}}0 if successful, 1 if error{p_end}
+
+{p2col 5 20 24 2: Macros}{p_end}
+{synopt:{cmd:r(dir)}}Directory where RegiStream stores configuration and cached metadata{p_end}
+{synopt:{cmd:r(version)}}Installed core version{p_end}
+
 
 {marker privacy}{...}
 {title:Privacy and Usage Tracking}
