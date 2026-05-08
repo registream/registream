@@ -146,3 +146,14 @@ test_that("type = 'character' keeps codes verbatim as strings", {
   result <- parse('"1" "Male" "2" "Female"', type = "character")
   expect_identical(result, c(Male = "1", Female = "2"))
 })
+
+
+test_that("type = 'character' filters out integer codes when both types are present", {
+  # SCB CIVIL: numeric "1"/"2" and string "OG"/"G" carry the SAME label
+  # strings. A character column ('OG', 'G') only matches string codes,
+  # and returning the integer-coded entries too would duplicate labels
+  # and trigger haven::labelled()'s "labels must be unique" error.
+  result <- parse('"1" "Unmarried" "2" "Married" "OG" "Unmarried" "G" "Married"',
+                  type = "character")
+  expect_identical(result, c(Unmarried = "OG", Married = "G"))
+})

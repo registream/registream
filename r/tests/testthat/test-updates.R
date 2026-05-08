@@ -224,7 +224,8 @@ test_that("check_package() includes autolabel_version in the heartbeat URL when 
     http_get_text = function(url, timeout_seconds) {
       captured$url <- url
       "registream_update=false\nregistream_latest=\n"
-    }
+    },
+    .package = "registream"
   )
 
   check_package("3.0.0")
@@ -259,7 +260,8 @@ test_that("check_package() includes both modules when both are installed", {
     http_get_text = function(url, timeout_seconds) {
       captured$url <- url
       "registream_update=false\nregistream_latest=\n"
-    }
+    },
+    .package = "registream"
   )
 
   check_package("3.0.0")
@@ -286,7 +288,8 @@ test_that("check_package() omits module params when neither is installed", {
     http_get_text = function(url, timeout_seconds) {
       captured$url <- url
       "registream_update=false\nregistream_latest=\n"
-    }
+    },
+    .package = "registream"
   )
 
   check_package("3.0.0")

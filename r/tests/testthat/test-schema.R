@@ -128,12 +128,12 @@ test_that("value_labels missing a required column raises rs_error_schema", {
 test_that("warn_invalid_variable_types counts non-standard types", {
   df <- valid_variables()
   df$variable_type <- c("continuous", "unknownweirdtype")
-  expect_equal(warn_invalid_variable_types(df), 1L)
+  expect_equal(registream:::warn_invalid_variable_types(df), 1L)
 })
 
 
 test_that("warn_invalid_variable_types returns 0 when column missing", {
   df <- valid_variables()
   df$variable_type <- NULL
-  expect_equal(warn_invalid_variable_types(df), 0L)
+  expect_equal(registream:::warn_invalid_variable_types(df), 0L)
 })

@@ -91,7 +91,7 @@ test_that("validate_manifest() parses a well-formed manifest", {
   write_manifest_csv(file.path(tmp, "autolabel", "scb"), "scb", "eng",
                      scope_depth = 2L)
 
-  m <- validate_manifest(read_metadata_csv(
+  m <- validate_manifest(registream:::read_metadata_csv(
     file.path(tmp, "autolabel", "scb", "manifest_eng.csv")
   ))
 
@@ -114,7 +114,7 @@ test_that("validate_manifest() rejects wrong schema_version", {
 
   path <- file.path(tmp, "autolabel", "scb", "manifest_eng.csv")
   expect_error(
-    validate_manifest(read_metadata_csv(path)),
+    validate_manifest(registream:::read_metadata_csv(path)),
     class = "rs_error_schema"
   )
 })
@@ -144,7 +144,7 @@ test_that("validate_manifest() rejects missing scope_level_N_name", {
                      col.names = TRUE, quote = FALSE, fileEncoding = "UTF-8")
 
   expect_error(
-    validate_manifest(read_metadata_csv(path)),
+    validate_manifest(registream:::read_metadata_csv(path)),
     class = "rs_error_schema"
   )
 })

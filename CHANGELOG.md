@@ -1,5 +1,15 @@
 # RegiStream Core Changelog
 
+This file tracks ecosystem-level core releases. Per-language details live in:
+
+- R port: [`r/NEWS.md`](r/NEWS.md)
+- Stata port: tracked here under each version's "Stata" section.
+- Python port: tracked here under each version's "Python" section.
+
+## v3.0.1 (2026-05-08) — R port only
+
+R-port patch fixing `parse_value_labels_stata(type = "character")` so it filters integer-coded entries when the metadata mixes integer and string codes (e.g. SCB's CIVIL with both numeric "1"/"2" and Swedish "OG"/"G"/"S" pointing to the same labels). Without this, applying labels to a character column with the mixed metadata triggered `haven::labelled()`'s `labels must be unique` error. See [`r/NEWS.md`](r/NEWS.md) for full details.
+
 ## v3.0.0 (2026-04-08)
 
 First release as a modular ecosystem (split from monorepo).

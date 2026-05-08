@@ -68,6 +68,18 @@ parse_value_labels_stata <- function(s, type = c("auto", "integer", "character")
     return(stats::setNames(code_ints[valid_int], labels[valid_int]))
   }
   if (type == "character") {
+    # Symmetric to the `integer` branch: when the metadata mixes
+    # integer-coded and string-coded entries (SCB's `CIVIL` carries both
+    # numeric "1"/"2" and Swedish "OG"/"G"/"S" codes with the SAME label
+    # strings), apply-time receives a character column and only the
+    # string-coded entries can match. Returning every entry coerced to
+    # string produced duplicate label names, which `haven::labelled()`
+    # rejects with "labels must be unique". When there are NO character
+    # codes (all-integer metadata, e.g. the existing parser test), fall
+    # back to coercing every code to string so the labels still apply.
+    if (any(!valid_int)) {
+      return(stats::setNames(code_strs[!valid_int], labels[!valid_int]))
+    }
     return(stats::setNames(code_strs, labels))
   }
 

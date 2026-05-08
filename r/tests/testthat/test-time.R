@@ -1,6 +1,6 @@
 test_that("STATA_EPOCH points at 1960-01-01 00:00:00 UTC", {
   expect_identical(
-    format(STATA_EPOCH, "%Y-%m-%d %H:%M:%S", tz = "UTC"),
+    format(registream:::STATA_EPOCH, "%Y-%m-%d %H:%M:%S", tz = "UTC"),
     "1960-01-01 00:00:00"
   )
 })
@@ -8,12 +8,12 @@ test_that("STATA_EPOCH points at 1960-01-01 00:00:00 UTC", {
 
 test_that("stata_clock_to_posix(0) returns the Stata epoch", {
   result <- stata_clock_to_posix(0)
-  expect_equal(as.numeric(result), as.numeric(STATA_EPOCH))
+  expect_equal(as.numeric(result), as.numeric(registream:::STATA_EPOCH))
 })
 
 
 test_that("posix_to_stata_clock(STATA_EPOCH) returns 0", {
-  expect_equal(posix_to_stata_clock(STATA_EPOCH), 0)
+  expect_equal(posix_to_stata_clock(registream:::STATA_EPOCH), 0)
 })
 
 

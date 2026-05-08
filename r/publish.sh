@@ -33,9 +33,9 @@
 #
 # Layout assumption:
 #   Repos are cloned as siblings under ~/Github/registream-org/:
-#     registream-org/registream/        ← core R package under r/
-#     registream-org/autolabel/         ← autolabel R package under r/
-#     registream-org/registream.org/    ← the website data/ tree
+#     registream-org/registream/         ← core R package under r/
+#     registream-org/autolabel/          ← autolabel R package under r/
+#     registream-org/registream-website/ ← the website data/ tree
 #   This script lives at registream-org/registream/r/publish.sh and
 #   walks up two levels to resolve siblings.
 
@@ -85,7 +85,7 @@ fi
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 repos_root="$(cd "$script_dir/../.." && pwd)"
 
-server_dir="$repos_root/registream.org/data/registream/r/src/contrib"
+server_dir="$repos_root/registream-website/data/registream/r/src/contrib"
 staging_dir="$(mktemp -d -t registream-r-XXXXXX)"
 trap 'rm -rf "$staging_dir"' EXIT
 
