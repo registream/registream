@@ -413,8 +413,8 @@ def generate_changelog(packages):
         else:
             print(f"  No CHANGELOG.md found for {pkg_name}")
 
-    with open(CHANGELOG_OUTPUT, "w") as f:
-        json.dump(changelog, f, indent=2)
+    with open(CHANGELOG_OUTPUT, "w", encoding="utf-8") as f:
+        json.dump(changelog, f, indent=2, ensure_ascii=False)
         f.write("\n")
 
     print(f"  Generated {CHANGELOG_OUTPUT.name}")

@@ -6,7 +6,9 @@ This file tracks ecosystem-level core releases. Per-language details live in:
 - Stata port: tracked here under each version's "Stata" section.
 - Python port: tracked here under each version's "Python" section.
 
-## v3.0.1 (2026-05-08) — R port only
+## v3.0.1 (2026-05-08)
+
+R port only.
 
 R-port patch fixing `parse_value_labels_stata(type = "character")` so it filters integer-coded entries when the metadata mixes integer and string codes (e.g. SCB's CIVIL with both numeric "1"/"2" and Swedish "OG"/"G"/"S" pointing to the same labels). Without this, applying labels to a character column with the mixed metadata triggered `haven::labelled()`'s `labels must be unique` error. See [`r/NEWS.md`](r/NEWS.md) for full details.
 
@@ -23,7 +25,7 @@ First release as a modular ecosystem (split from monorepo).
 
 ### Changes from v2.0.2
 
-- **Config format**: `config_stata.yaml` replaced with `config_stata.csv` (key;value format, native Stata I/O — no YAML parser needed).
+- **Config format**: `config_stata.yaml` replaced with `config_stata.csv` (key;value format, native Stata I/O, no YAML parser needed).
 - **Dataset management removed from core**: `scan_datasets`, `check_datasets_bulk`, `update_datasets_interactive` moved to autolabel.
 - **Schema validation removed from core**: `_rs_validate_schema.ado` moved to autolabel.
 - **Heartbeat rewrite**: Single `send_heartbeat` function handles telemetry and update checking. Removed redundant `check_background`.
