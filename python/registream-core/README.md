@@ -56,7 +56,7 @@ Jupyter) returns the reference inline.
 ## Citation
 
 ```
-Clark, J. & Wen, J. (2024–). RegiStream: Infrastructure for Register Data Research. https://registream.org
+Clark, J. & Wen, J. (2024). RegiStream: Infrastructure for Register Data Research. https://registream.org
 ```
 
 `registream.citation.cite()` returns the versioned form; `cite_bibtex()`

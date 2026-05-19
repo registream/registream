@@ -6,7 +6,7 @@ Edit ~/Github/registream-org/registream/citations.yaml, then run:
     python tools/render_citations.py check          # print all variants
     python tools/render_citations.py write-python   # write _citation_data.py into Python packages
     python tools/render_citations.py write-r        # write _citation_data.R into R packages
-    python tools/render_citations.py write-flask    # vendor a copy into registream.org/app/
+    python tools/render_citations.py write-flask    # vendor a copy into registream-website/app/
     python tools/render_citations.py write-cff      # write CITATION.cff into each repo root
     python tools/render_citations.py write-all      # all of the above
 
@@ -87,12 +87,84 @@ def html_apa(key: str, works: dict) -> str:
     w = works[key]
     return (
         f"{_authors_apa(w)} ({w['year']}). <em>{w['title']}</em>. "
-        f'<a href="{w["url"]}">{w["url"]}</a>'
+        f'Available at: <a href="{w["url"]}" target="_blank">{w["url"]}</a>'
     )
 
 
 def plain_apa(key: str, works: dict) -> str:
     return apa(key, works)
+
+
+# ─── Journal-article renderers ────────────────────────────────────────────────
+# Parallel to the software renderers above. Used for works with
+# ``type: journal_article``. Volume / issue / pages may be missing while a
+# paper is forthcoming or in preparation; the renderers degrade gracefully.
+
+def _article_locator(w: dict) -> str:
+    """Return ', Vol(Iss), pages' if all three are present, '' otherwise."""
+    vol = w.get("volume", "")
+    iss = w.get("issue", "")
+    pages = w.get("pages", "")
+    if vol and iss and pages:
+        return f", {vol}({iss}), {pages}"
+    return ""
+
+
+def _article_doi_url(w: dict) -> str:
+    doi = w.get("doi", "")
+    if doi:
+        return f"https://doi.org/{doi}"
+    return w.get("url", "")
+
+
+def apa_article(key: str, works: dict) -> str:
+    w = works[key]
+    locator = _article_locator(w)
+    venue = w.get("venue", "")
+    tail = f"{venue}{locator}." if venue else ""
+    doi_url = _article_doi_url(w)
+    doi_tail = f" {doi_url}" if doi_url else ""
+    return f"{_authors_apa(w)} ({w['year']}). {w['title']}. {tail}{doi_tail}".strip()
+
+
+def html_apa_article(key: str, works: dict) -> str:
+    w = works[key]
+    locator = _article_locator(w)
+    venue = w.get("venue", "")
+    tail = f"<em>{venue}</em>{locator}." if venue else ""
+    doi_url = _article_doi_url(w)
+    doi_tail = (
+        f' <a href="{doi_url}" target="_blank">{doi_url}</a>' if doi_url else ""
+    )
+    return f"{_authors_apa(w)} ({w['year']}). {w['title']}. {tail}{doi_tail}".strip()
+
+
+def bibtex_article(key: str, works: dict) -> str:
+    w = works[key]
+    lines = [
+        f"@{w['bibtex_type']}{{{w['bibtex_key']},",
+        f"  author  = {{{_authors_bibtex(w)}}},",
+        f"  title   = {{{{{w['title']}}}}},",
+    ]
+    if w.get("venue"):
+        lines.append(f"  journal = {{{w['venue']}}},")
+    lines.append(f"  year    = {{{w['year']}}},")
+    if w.get("volume"):
+        lines.append(f"  volume  = {{{w['volume']}}},")
+    # SJ style omits issue numbers when continuously paginated; emit only
+    # when populated (caller's policy choice).
+    if w.get("issue"):
+        lines.append(f"  number  = {{{w['issue']}}},")
+    if w.get("pages"):
+        lines.append(f"  pages   = {{{w['pages']}}},")
+    if w.get("doi"):
+        lines.append(f"  doi     = {{{w['doi']}}}")
+    else:
+        # Strip trailing comma from last line if no doi
+        if lines[-1].endswith(","):
+            lines[-1] = lines[-1].rstrip(",")
+    lines.append("}")
+    return "\n".join(lines)
 
 
 def bibtex(key: str, works: dict, include_version_placeholder: bool = False) -> str:
@@ -180,27 +252,58 @@ _VERSION_LOCALS = {
 
 
 def as_dict(works: dict) -> dict:
-    """Return a dict of {work_key: {variant_name: string}} covering all formats."""
+    """Return a dict of {work_key: {variant_name: string}} covering all formats.
+
+    Dispatches on ``work['type']``:
+      - "software" (default): uses the software renderers (versioned forms, etc.)
+      - "journal_article": uses the article renderers; versioned/sthlp/ado-cite
+        variants fall back to the article apa form since articles aren't
+        versioned and don't ship inside Stata packages.
+    """
     out = {}
     for key in works:
-        out[key] = {
-            "apa": apa(key, works),
-            "apa_versioned": apa_versioned(key, works),
-            "sthlp_apa_versioned": sthlp_apa_versioned(key, works),
-            "html_apa": html_apa(key, works),
-            "plain_apa": plain_apa(key, works),
-            "bibtex": bibtex(key, works),
-            "bibtex_versioned": bibtex(key, works, include_version_placeholder=True),
-            "ado_cite_block": ado_cite_block(
-                key, works, version_local=_VERSION_LOCALS.get(key, "VERSION")
-            ),
-            "cff": cff(key, works),
-            "title": works[key]["title"],
-            "short_title": works[key]["short_title"],
-            "url": works[key]["url"],
-            "year": works[key]["year"],
-            "bibtex_key": works[key]["bibtex_key"],
-        }
+        w = works[key]
+        wtype = w.get("type", "software")
+
+        if wtype == "journal_article":
+            article_apa = apa_article(key, works)
+            article_html = html_apa_article(key, works)
+            article_bibtex = bibtex_article(key, works)
+            out[key] = {
+                "apa": article_apa,
+                "apa_versioned": article_apa,
+                "sthlp_apa_versioned": article_apa,
+                "html_apa": article_html,
+                "plain_apa": article_apa,
+                "bibtex": article_bibtex,
+                "bibtex_versioned": article_bibtex,
+                "ado_cite_block": "",
+                "cff": cff(key, works),
+                "title": w["title"],
+                "short_title": w.get("short_title", w["title"]),
+                "url": _article_doi_url(w),
+                "year": w["year"],
+                "bibtex_key": w["bibtex_key"],
+            }
+        else:
+            out[key] = {
+                "apa": apa(key, works),
+                "apa_versioned": apa_versioned(key, works),
+                "sthlp_apa_versioned": sthlp_apa_versioned(key, works),
+                "html_apa": html_apa(key, works),
+                "plain_apa": plain_apa(key, works),
+                "bibtex": bibtex(key, works),
+                "bibtex_versioned": bibtex(key, works, include_version_placeholder=True),
+                "ado_cite_block": ado_cite_block(
+                    key, works, version_local=_VERSION_LOCALS.get(key, "VERSION")
+                ),
+                "cff": cff(key, works),
+                "title": w["title"],
+                "short_title": w["short_title"],
+                "url": w["url"],
+                "year": w["year"],
+                "bibtex_key": w["bibtex_key"],
+            }
     return out
 
 
@@ -388,7 +491,7 @@ def _cmd_write_flask(works: dict) -> None:
     """
     import json
 
-    app_dir = ORG_ROOT / "registream.org" / "app"
+    app_dir = ORG_ROOT / "registream-website" / "app"
     app_dir.mkdir(parents=True, exist_ok=True)
 
     json_dst = app_dir / "_citations.json"

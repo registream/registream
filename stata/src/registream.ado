@@ -317,7 +317,7 @@ program define _registream_info
 	di as result "{hline 60}"
 	di as text ""
 	di as text "Citation:"
-	di as text "  Clark, J. & Wen, J. (2024–). RegiStream:"
+	di as text "  Clark, J. & Wen, J. (2024). RegiStream:"
 	di as text "  Infrastructure for Register Data Research. https://registream.org"
 	di as text ""
 	di as text "Full citation (with version & datasets): {stata registream cite:registream cite}"

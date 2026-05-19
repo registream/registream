@@ -62,7 +62,7 @@ python -m registream.autolabel {version,info,cite}
 ## Citation
 
 ```
-Clark, J. & Wen, J. (2024–). RegiStream: Infrastructure for Register Data Research. https://registream.org
+Clark, J. & Wen, J. (2024). RegiStream: Infrastructure for Register Data Research. https://registream.org
 ```
 
 ## Authors

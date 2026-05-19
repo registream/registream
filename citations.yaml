@@ -13,7 +13,7 @@ works:
     authors:
       - { family: Clark, given: J., full: "Clark, Jeffrey" }
       - { family: Wen,   given: J., full: "Wen, Jie" }
-    year: "2024–"
+    year: "2024"
     title: "RegiStream: Infrastructure for Register Data Research"
     short_title: "Infrastructure for Register Data Research"
     url: "https://registream.org"
@@ -25,7 +25,7 @@ works:
     authors:
       - { family: Clark, given: J., full: "Clark, Jeffrey" }
       - { family: Wen,   given: J., full: "Wen, Jie" }
-    year: "2024–"
+    year: "2024"
     title: "autolabel: Automating variable and value labeling for register-data research"
     short_title: "Automating variable and value labeling"
     url: "https://registream.org/docs/autolabel"
