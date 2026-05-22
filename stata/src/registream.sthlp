@@ -78,7 +78,7 @@ Data work is handled by individual modules:
 
 {phang2}
 {hline 2} {help autolabel:autolabel}: apply variable and value labels from structured metadata{break}
-{hline 2} {help datamirror:datamirror}: coefficient-faithful synthetic data with SDC-safe extract
+{hline 2} {help datamirror:datamirror}: coefficient-preserving synthetic data with SDC-safe extract
 {p_end}
 
 {marker modules}{...}
@@ -92,7 +92,7 @@ Iceland) plus institutional metadata. See {help autolabel:help autolabel}.
 {p_end}
 
 {pstd}
-{help datamirror:datamirror}: Build coefficient-faithful synthetic data for
+{help datamirror:datamirror}: Build coefficient-preserving synthetic data for
 replication outside secure environments. Extracts marginals, correlations, and
 regression checkpoints with automatic small-cell suppression. See
 {help datamirror:help datamirror}.
