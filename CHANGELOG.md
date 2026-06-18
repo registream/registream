@@ -6,6 +6,12 @@ This file tracks ecosystem-level core releases. Per-language details live in:
 - Stata port: tracked here under each version's "Stata" section.
 - Python port: tracked here under each version's "Python" section.
 
+## v3.0.2 (2026-06-18)
+
+R and Python ports.
+
+The metadata cache reader now falls back to a comma delimiter when a cache CSV reads as a single column, so a cache written by an older client loads instead of reporting a present column as missing. The ecosystem convention stays semicolon. See [`r/NEWS.md`](r/NEWS.md) for the R details.
+
 ## v3.0.1 (2026-05-08)
 
 R port only.

@@ -1,5 +1,12 @@
 # registream (R port) — NEWS
 
+## registream 3.0.2 (2026-06-18)
+
+### Bug fixes
+
+- **`read_metadata_csv()` reads comma-delimited cache CSVs as a fallback.** Cache CSVs follow the semicolon convention, but a file written comma-delimited by an older client collapsed to a single column when read as semicolon, after which the schema check reported the first required column (e.g. `value_label_id`) as missing although it was present. The reader now re-reads as comma when the semicolon parse yields one column. Every v3 metadata file has at least two required columns, so a single column unambiguously means the wrong delimiter.
+
+
 ## registream 3.0.1 (2026-05-08)
 
 R-port-only patch. Stata and Python clients are unaffected.

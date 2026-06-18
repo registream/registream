@@ -1,6 +1,6 @@
 Package: registream
 Title: Register-Data Infrastructure for Statistical Analysis
-Version: 3.0.1
+Version: 3.0.2
 Authors@R: c(
     person("Jeffrey", "Clark", role = c("aut", "cre"),
            email = "jeffrey@registream.org"),

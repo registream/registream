@@ -173,14 +173,29 @@ read_metadata_dta <- function(path) {
 }
 
 read_metadata_csv <- function(path) {
-  utils::read.csv(
-    path,
-    sep = ";",
-    encoding = "UTF-8",
-    stringsAsFactors = FALSE,
-    check.names = FALSE,
-    na.strings = c("NA", "")
-  )
+  read_one <- function(sep) {
+    utils::read.csv(
+      path,
+      sep = sep,
+      encoding = "UTF-8",
+      stringsAsFactors = FALSE,
+      check.names = FALSE,
+      na.strings = c("NA", "")
+    )
+  }
+  # The ecosystem convention is semicolon. A comma-delimited file (e.g. a
+  # cache written by an older Stata client, before the `delimiter(";")` fix
+  # in autolabel `_al_utils.ado`) read as semicolon collapses to a single
+  # fused column, and the schema check then reports the first required
+  # column as "missing" though it is present. Every v3 metadata file has at
+  # least two required columns, so `ncol <= 1` unambiguously means the wrong
+  # delimiter: re-read as comma. Header column-counting decides this, so it
+  # is unaffected by embedded `;` inside quoted data fields.
+  df <- read_one(";")
+  if (ncol(df) <= 1L) {
+    df <- read_one(",")
+  }
+  df
 }
 
 require_haven <- function() {

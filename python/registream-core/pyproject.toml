@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "registream-core"
-version = "3.0.0"
+version = "3.0.2"
 description = "RegiStream Python core: config, telemetry, metadata cache, schema validator."
 readme = "README.md"
 requires-python = ">=3.11"

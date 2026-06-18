@@ -319,4 +319,16 @@ def _read_dta(path: Path) -> pd.DataFrame:
 def _read_csv(path: Path) -> pd.DataFrame:
     # CSV convention from docs/schema.md §CSV conventions: UTF-8,
     # semicolon-delimited (manifest + all data files).
-    return pd.read_csv(path, encoding="utf-8", sep=";")
+    #
+    # Fallback: a comma-delimited file (e.g. a cache written by an older
+    # Stata client before the ``delimiter(";")`` fix) read as semicolon
+    # collapses to a single fused column, after which the schema check
+    # reports the first required column as missing although it is present.
+    # Every v3 metadata file has at least two required columns, so a single
+    # column unambiguously means the wrong delimiter: re-read as comma. The
+    # header decides the count, so embedded ``;`` inside quoted fields is
+    # irrelevant.
+    df = pd.read_csv(path, encoding="utf-8", sep=";")
+    if df.shape[1] <= 1:
+        df = pd.read_csv(path, encoding="utf-8", sep=",")
+    return df
