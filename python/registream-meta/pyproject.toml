@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "registream"
-version = "3.0.0"
+version = "3.0.2"
 description = "RegiStream: Infrastructure for Register Data Research."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -13,8 +13,8 @@ authors = [
     { name = "Jie Wen", email = "jie@registream.org" },
 ]
 dependencies = [
-    "registream-core>=3.0,<4.0",
-    "registream-autolabel>=3.0,<4.0",
+    "registream-core>=3.0.2,<4.0",
+    "registream-autolabel>=3.0.2,<4.0",
 ]
 
 # Local-dev path overrides. Stripped from the published wheel; pip never sees
